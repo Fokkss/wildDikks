@@ -1,3 +1,12 @@
-pandas==2.2.0
-scikit-learn==1.4.0
-# new libs to be added
+pandas==2.2.2
+numpy==1.26.4
+
+scikit-learn==1.4.2
+catboost==1.2.5
+lightgbm==4.3.0
+xgboost==2.0.3
+
+matplotlib==3.8.4
+seaborn==0.13.2
+
+statsmodels==0.14.2
