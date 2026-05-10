@@ -7,6 +7,7 @@ data/
 venv/
 env/
 .idea/
+.venv
 
 # system files
 .DS_Store
