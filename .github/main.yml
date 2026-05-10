@@ -1,21 +1,41 @@
-name: CI-Pipeline
+name: ML Pipeline Check
 
 on:
   push:
-    branches: [ "main", "pd_branch", "cheesyplate_branch", "vaas_branch", "solvrx_branch" ]
+    branches: [ "main", "solvrx_branch", "pd_branch", "cheesyplate_branch", "vaas_branch" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
+  test-environment:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Build Docker Image
+        # caching
         run: docker build -t wind-app .
 
-      - name: Run basic health check
-        # TODO
-        run: docker run --rm wind-app python src/train.py
+      - name: Run Integration Test
+        # right format check
+        run: |
+          mkdir -p output
+          docker run --rm -v $(pwd)/output:/app/output wind-app python src/infer.py
+
+      - name: Run Integration Test & Validation
+        # validate_format check
+        run: |
+          mkdir -p output
+          docker run --rm -v $(pwd)/output:/app/output wind-app python src/infer.py
+          docker run --rm -v $(pwd)/output:/app/output wind-app python src/validate_format.py
+
+      - name: Validate Output Format
+        # exists and emptiness check
+        run: |
+          if [ -s output/prediction.csv ]; then
+            echo "prediction file created"
+          else
+            echo "error: no forecasts yet!"
+            exit 1
+          fi
