@@ -52,7 +52,13 @@ jobs:
           mkdir -p output
           docker run --rm -v $(pwd)/output:/app/output wind-app python src/infer.py
           docker run --rm -v $(pwd)/output:/app/output wind-app python src/validate_format.py
+<<<<<<< solvrx_branch
       - name: Check Output File
+=======
+
+      - name: Validate Output Format
+        # exists and emptiness check
+>>>>>>> main
         run: |
           if [ -s output/prediction.csv ]; then
             echo "Success: prediction.csv is ready"

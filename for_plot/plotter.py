@@ -1,7 +1,4 @@
 # TODO: maybe some improvements required
-#  + refactor
-#  + change saving path
-#  + change parsing logic from input to argparse
 
 import sys
 import pandas as pd
@@ -83,7 +80,6 @@ def plot_csv_data(file_path):
             axes[i].set_ylabel(y_axis)
             axes[i].grid(True, alpha=0.3)
 
-        # TODO: change export path to folder "plots" in root dir
         if export_pdf == 'y':
             out = input("Enter PDF name: ").strip() or "output.pdf"
             with PdfPages(out) as pdf: pdf.savefig(fig)
