@@ -1,12 +1,21 @@
-#Ы. Пусть сей замечательный код переделают. Я не програмист. Мне пришлось отсортировать эту шляпу по иксу. Ещё пусть добавят нормальный tab complete, потому что этот только для линукса работает, если конечно это нужно.
+# TODO: maybe some improvements required
+
+import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import os
-import readline
 import glob
 
-#Tab completion. Без этого невероятно больно, но сделано оно через волосатую сраку.
+try:
+    import readline
+except ImportError:
+    try:
+        import pyreadline3 as readline
+    except ImportError:
+        print("warning: pyreadline not installed, skipping readline")
+        readline = None
+
 def path_completer(text, state):
     expanded_text = os.path.expanduser(text)
     matches = glob.glob(expanded_text + '*')
@@ -22,6 +31,18 @@ def list_completer_factory(valid_list):
         return before + matches[state] if state < len(matches) else None
     return completer
 
+
+if readline:
+    readline.set_completer_delims(' \t\n;')
+
+    # for macOS
+    if sys.platform == 'darwin':
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
+
+    readline.set_completer(path_completer)
+
 readline.set_completer_delims(' \t\n;')
 readline.parse_and_bind("tab: complete")
 readline.set_completer(path_completer)
@@ -31,9 +52,9 @@ def plot_csv_data(file_path):
         full_path = os.path.abspath(os.path.expanduser(file_path))
         df = pd.read_csv(full_path)
         cols = list(df.columns)
-        print(f"Available columns are: {cols}") 
-        #Enable column completion
-        readline.set_completer(list_completer_factory(cols))
+        print(f"Available columns are: {cols}")
+        if readline:
+            readline.set_completer(list_completer_factory(cols))
 
         y_axis = input("\nSelext Y-axis column: ").strip()
         x_axes_input = input("SelectX-axis columns (comma separated): ")
@@ -47,13 +68,11 @@ def plot_csv_data(file_path):
         if num_plots == 1: axes = [axes]
 
         for i, x_col in enumerate(x_axes):
-            #Вот это место. Возможно оно всё невероятным образом испоганит в будущем.
             sorted_df = df.sort_values(by=x_col)
             
             if plot_type == 's':
                 axes[i].scatter(sorted_df[x_col], sorted_df[y_axis], alpha=0.3, s=1)
             else:
-                #А вдруг там где-то будет линия. Ага. Конечно
                 axes[i].plot(sorted_df[x_col], sorted_df[y_axis], linewidth=0.8, alpha=0.8)
 
             axes[i].set_title(f"{y_axis} vs {x_col} (Sorted)")
@@ -69,7 +88,7 @@ def plot_csv_data(file_path):
         plt.show()
 
     except Exception as e:
-        print(f"error:: {e}")
+        print(f"error: {e}")
 
 if __name__ == "__main__":
     path = input("CSV Path: ").strip()
