@@ -30,6 +30,10 @@ jobs:
           docker run --rm -v $(pwd)/output:/app/output wind-app python src/infer.py
           docker run --rm -v $(pwd)/output:/app/output wind-app python src/validate_format.py
 
+      - name: Run Tests
+        run: |
+          docker run --rm wind-app pytest tests/
+
       - name: Validate Output Format
         # exists and emptiness check
         run: |
