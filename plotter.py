@@ -1,7 +1,4 @@
-#Пусть вайбкодеры переделают. Я не програмист.
-# Мне пришлост отсортировать эту шляпу по иксу.
-# Ещё пусть вайбкодеры добавят нормальный tab complete,
-# потому что этот только для линукса работает, если конечно это нужно.
+#Ы. Пусть сей замечательный код переделают. Я не програмист. Мне пришлось отсортировать эту шляпу по иксу. Ещё пусть добавят нормальный tab complete, потому что этот только для линукса работает, если конечно это нужно.
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -9,7 +6,7 @@ import os
 import readline
 import glob
 
-#Tab completion. Без этого невероятно больно.
+#Tab completion. Без этого невероятно больно, но сделано оно через волосатую сраку.
 def path_completer(text, state):
     expanded_text = os.path.expanduser(text)
     matches = glob.glob(expanded_text + '*')
@@ -50,7 +47,7 @@ def plot_csv_data(file_path):
         if num_plots == 1: axes = [axes]
 
         for i, x_col in enumerate(x_axes):
-            #Вот это место. Возможно оно всё похерит в будущем. 
+            #Вот это место. Возможно оно всё невероятным образом испоганит в будущем.
             sorted_df = df.sort_values(by=x_col)
             
             if plot_type == 's':
