@@ -2,6 +2,8 @@
 #  + refactor
 #  + change parsing logic from input to argparse
 
+# Added regex supprt starting at line 63.
+
 import sys
 from pathlib import Path
 import pandas as pd
@@ -9,6 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import os
 import glob
+import re
 
 try:
     import readline
@@ -61,8 +64,17 @@ def plot_csv_data(file_path):
 
         y_axis = input("\nSelext Y-axis column: ").strip()
         x_axes_input = input("SelectX-axis columns (comma separated): ")
-        x_axes = [col.strip() for col in x_axes_input.split(',')]
-        
+        x_axes = []
+        for pattern in [p.strip() for p in x_axes_input.split(',')]:
+            try:
+                matched = [c for c in cols if re.match(pattern, c)]
+                if matched:
+                    x_axes.extend(matched)
+                else:
+                    print(f"No columns matched '{pattern}'")
+            except re.error:
+                print(f"Invalid regex pattern '{pattern}'")
+
         plot_type = input("\nLine or Scatter plot? (l/s): ").strip().lower()
         export_pdf = input("Export to PDF? (y/n): ").strip().lower()
 
