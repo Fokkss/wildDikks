@@ -1,8 +1,11 @@
 # TODO: maybe some improvements required
+#  + refactor
+#  + change parsing logic from input to argparse
 
 # Added regex supprt starting at line 63.
 
 import sys
+from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -94,7 +97,14 @@ def plot_csv_data(file_path):
 
         if export_pdf == 'y':
             out = input("Enter PDF name: ").strip() or "output.pdf"
-            with PdfPages(out) as pdf: pdf.savefig(fig)
+            base_dir = Path(__file__).resolve().parent.parent
+            save_dir = base_dir / "data"
+
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            final_path = save_dir / out
+
+            with PdfPages(final_path) as pdf: pdf.savefig(fig)
             print(f"Saved at: {os.path.abspath(out)}")
 
         plt.show()
