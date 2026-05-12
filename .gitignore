@@ -17,3 +17,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .ipynb_checkpoints/
+
+# artifacts
+wildDikks/new_model/artifacts/
+artifacts/
+/new_model/artifacts/
