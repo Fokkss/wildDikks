@@ -2,7 +2,7 @@
 #  + refactor
 #  + change parsing logic from input to argparse
 
-# Added regex supprt starting at line 63.
+# Added regex support starting at line 63.
 
 import sys
 from pathlib import Path

@@ -11,7 +11,7 @@ def save_final_submission(predictions, filename="output/prediction.csv"):
 
     df.to_csv(filename, index=False, header=None, decimal='.', sep=',')
 
-    print(f"Файл {filename} успешно сохранен и готов к отправке!")
+    print(f"file {filename} successfully saved")
 
 
 # test subject
