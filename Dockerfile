@@ -16,4 +16,10 @@ COPY for_plot/ ./for_plot/
 
 COPY new_model/ ./new_model/
 
+COPY data/ ./data/
+
 COPY pytest.ini .
+
+
+
+ENV PYTHONPATH=/app

@@ -8,7 +8,7 @@ def save_final_submission(predictions, filename="output/prediction.csv"):
         print("NaN detected!!!! :000, turning in 0.0")
         df = df.fillna(0.0)
 
-    df.to_csv(filename, index=False, header=None, decimal='.', sep=',')
+    df.to_csv(filename, index=False, header=None, decimal=".", sep=",")
 
     print(f"file {filename} successfully saved")
 

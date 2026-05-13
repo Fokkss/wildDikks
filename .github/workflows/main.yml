@@ -63,42 +63,10 @@ jobs:
 
       - name: Run unit tests
         run: docker run --rm -e PYTHONPATH=/app wind-app pytest tests/ -m "not integration"
-      - name: Train small model
-        run: |
-          docker run --rm \
-            -e PYTHONPATH=/app \
-            -v $(pwd)/output:/app/output \
-            wind-app \
-            python -m new_model.train \
-              --train_path tests/fixtures/train_dataset_small.csv \
-              --model_dir output/artifacts \
-              --target "Результирующий расчет" \
-              --n_splits 2 \
-              --n_estimators 50 \
-              --early_stopping_rounds 10
-
-      - name: Predict small validation
-        run: |
-          docker run --rm \
-            -e PYTHONPATH=/app \
-            -v $(pwd)/output:/app/output \
-            wind-app \
-            python -m new_model.predict \
-              --features_path tests/fixtures/valid_features_small.csv \
-              --model_dir output/artifacts \
-              --output_path output/prediction.csv
-
-      - name: Validate prediction format
-        run: |
-          docker run --rm \
-            -e PYTHONPATH=/app \
-            -v $(pwd)/output:/app/output \
-            wind-app \
-            pytest tests/test_submission_format.py
 
   integration:
     name: Train and predict smoke test
-    needs: [build, unit-tests]
+    needs: [build, lint, unit-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -110,6 +78,40 @@ jobs:
 
       - name: Load Docker image
         run: docker load < wind-app.tar
+
+      - name: Train model
+        run: |
+          mkdir -p output
+          docker run --rm \
+            -e PYTHONPATH=/app \
+            -v $(pwd)/output:/app/output \
+            wind-app \
+            python -m new_model.train \
+              --train_path data/train_dataset.csv \
+              --model_dir output/artifacts \
+              --target "Результирующий расчет" \
+              --n_splits 2 \
+              --n_estimators 50 \
+              --early_stopping_rounds 10
+
+      - name: Predict validation
+        run: |
+          docker run --rm \
+            -e PYTHONPATH=/app \
+            -v $(pwd)/output:/app/output \
+            wind-app \
+            python -m new_model.predict \
+              --features_path data/valid_features.csv \
+              --model_dir output/artifacts \
+              --output_path output/prediction.csv
+
+      - name: Validate prediction format
+        run: |
+          docker run --rm \
+            -e PYTHONPATH=/app \
+            -v $(pwd)/output:/app/output \
+            wind-app \
+            pytest tests/test_submission_format.py
 
       - name: Run integration tests
         run: docker run --rm -e PYTHONPATH=/app wind-app pytest tests/ -m "integration"

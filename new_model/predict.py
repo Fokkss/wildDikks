@@ -20,7 +20,6 @@ from new_model.feature_engineering import (
     FARM_CAPACITY_MW,
     available_capacity_from_raw,
     make_features,
-    sort_by_time_if_possible,
 )
 
 
@@ -30,10 +29,18 @@ def load_csv(path: str) -> pd.DataFrame:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--features_path", required=True, help="Path to valid_features.csv")
-    parser.add_argument("--model_dir", default="artifacts", help="Directory with wind_xgb_model.joblib")
+    parser.add_argument(
+        "--features_path", required=True, help="Path to valid_features.csv"
+    )
+    parser.add_argument(
+        "--model_dir", default="artifacts", help="Directory with wind_xgb_model.joblib"
+    )
     parser.add_argument("--output_path", default="submission.csv")
-    parser.add_argument("--prediction_col", default="prediction", help="Name of the single prediction column")
+    parser.add_argument(
+        "--prediction_col",
+        default="prediction",
+        help="Name of the single prediction column",
+    )
     args = parser.parse_args()
 
     artifact_path = Path(args.model_dir) / "wind_xgb_model.joblib"

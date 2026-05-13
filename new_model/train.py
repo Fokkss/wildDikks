@@ -42,7 +42,9 @@ def set_seed(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
-def build_model(seed: int, n_estimators: int = 5000, early_stopping_rounds: int | None = None) -> XGBRegressor:
+def build_model(
+    seed: int, n_estimators: int = 5000, early_stopping_rounds: int | None = None
+) -> XGBRegressor:
     params = dict(
         n_estimators=n_estimators,
         learning_rate=0.03,
@@ -64,7 +66,9 @@ def build_model(seed: int, n_estimators: int = 5000, early_stopping_rounds: int 
     return XGBRegressor(**params)
 
 
-def select_feature_columns(fe: pd.DataFrame, target_col: str, drop_cols: list[str] | None = None) -> list[str]:
+def select_feature_columns(
+    fe: pd.DataFrame, target_col: str, drop_cols: list[str] | None = None
+) -> list[str]:
     drop = set(drop_cols or []) | {target_col}
     cols: list[str] = []
     for col in fe.columns:
@@ -85,8 +89,12 @@ def load_csv(path: str) -> pd.DataFrame:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_path", required=True, help="Path to train_dataset.csv")
-    parser.add_argument("--model_dir", default="artifacts", help="Where to save model artifacts")
-    parser.add_argument("--target", default="Результирующий расчет", help="Target column name")
+    parser.add_argument(
+        "--model_dir", default="artifacts", help="Where to save model artifacts"
+    )
+    parser.add_argument(
+        "--target", default="Результирующий расчет", help="Target column name"
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--capacity_mw", type=float, default=FARM_CAPACITY_MW)
@@ -115,7 +123,9 @@ def main() -> None:
     fe = make_features(raw, target_col=target_col)
     dt_col = find_datetime_col(fe)
     drop_cols = [dt_col] if dt_col is not None else []
-    feature_cols = select_feature_columns(fe, target_col=target_col, drop_cols=drop_cols)
+    feature_cols = select_feature_columns(
+        fe, target_col=target_col, drop_cols=drop_cols
+    )
 
     X = fe[feature_cols]
     imputer = SimpleImputer(strategy="median")
@@ -149,8 +159,17 @@ def main() -> None:
         else:
             best_iter += 1
         best_iterations.append(int(best_iter))
-        fold_rows.append({"fold": fold, "mae_mw": mae, "rmse_mw": rmse, "best_iteration": int(best_iter)})
-        print(f"Fold {fold}: MAE={mae:.4f} MW | RMSE={rmse:.4f} MW | best_iter={best_iter}")
+        fold_rows.append(
+            {
+                "fold": fold,
+                "mae_mw": mae,
+                "rmse_mw": rmse,
+                "best_iteration": int(best_iter),
+            }
+        )
+        print(
+            f"Fold {fold}: MAE={mae:.4f} MW | RMSE={rmse:.4f} MW | best_iter={best_iter}"
+        )
 
     cv = pd.DataFrame(fold_rows)
     print("\nCV summary")
@@ -159,8 +178,12 @@ def main() -> None:
     print(f"Mean RMSE: {cv['rmse_mw'].mean():.4f} MW")
 
     # Train final model on all data with number of trees inferred from time-series CV.
-    final_estimators = int(np.clip(np.median(best_iterations) * 1.10, 30, args.n_estimators))
-    final_model = build_model(seed=args.seed, n_estimators=final_estimators, early_stopping_rounds=None)
+    final_estimators = int(
+        np.clip(np.median(best_iterations) * 1.10, 30, args.n_estimators)
+    )
+    final_model = build_model(
+        seed=args.seed, n_estimators=final_estimators, early_stopping_rounds=None
+    )
     final_model.fit(X_imp, y, verbose=False)
 
     artifact = {
