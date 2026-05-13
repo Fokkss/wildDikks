@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import math
 import re
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -26,6 +24,8 @@ def add_custom_features(df: pd.DataFrame) -> pd.DataFrame:
     # cube dependence example
     if 'ws_80m' in out.columns:
         out['wind_speed_cube'] = out['ws_80m'] ** 3
+        # Рабочая зона турбины (отсекаем лишнее)
+        out["hub_ws_piece_3_12"] = (out['ws_80m'].clip(3.0, 12.0) - 3.0).clip(lower=0.0)
 
     # (turbulence between 10m and 80m) example
     if 'ws_10m' in out.columns and 'ws_80m' in out.columns:
@@ -33,11 +33,49 @@ def add_custom_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # air density example
     if 'temp_k' in out.columns and 'pressure_pa' in out.columns:
-        # P / (R * T)
         out['air_density'] = out['pressure_pa'] / (config.R_DRY_AIR * out['temp_k'])
+
+        # Полная энергия ветрового потока: W = 0.5 * ρ * v^3
+        if 'wind_speed_cube' in out.columns:
+            out["wind_power_density"] = 0.5 * out['air_density'] * out['wind_speed_cube']
+
+    if 'ws_80m' in out.columns:
+        # Сдвигаем на 1 строку вниз (значение прошлого часа)
+        out["hub_ws_lag1"] = out['ws_80m'].shift(1)
+        # Ускорение/замедление ветра
+        out["hub_ws_diff1"] = out['ws_80m'] - out['ws_80m'].shift(1)
+        # Скользящее среднее за 3 часа (сглаживает порывы)
+        out["hub_ws_roll_mean_3"] = out['ws_80m'].shift(1).rolling(3, min_periods=1).mean()
 
     return out
 
+
+def add_custom_features(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    # 1. БАЗОВАЯ ФИЗИКА
+    if 'ws_80m' in out.columns:
+        out['wind_speed_cube'] = out['ws_80m'] ** 3
+        # Рабочая зона турбины (отсекаем лишнее)
+        out["hub_ws_piece_3_12"] = (out['ws_80m'].clip(3.0, 12.0) - 3.0).clip(lower=0.0)
+
+    if 'temp_k' in out.columns and 'pressure_pa' in out.columns:
+        out['air_density'] = out['pressure_pa'] / (config.R_DRY_AIR * out['temp_k'])
+
+        # Полная энергия ветрового потока: W = 0.5 * ρ * v^3
+        if 'wind_speed_cube' in out.columns:
+            out["wind_power_density"] = 0.5 * out['air_density'] * out['wind_speed_cube']
+
+    # 2. ВРЕМЕННАЯ ДИНАМИКА (ЛАГИ) - Возвращаем память модели!
+    if 'ws_80m' in out.columns:
+        # Сдвигаем на 1 строку вниз (значение прошлого часа)
+        out["hub_ws_lag1"] = out['ws_80m'].shift(1)
+        # Ускорение/замедление ветра
+        out["hub_ws_diff1"] = out['ws_80m'] - out['ws_80m'].shift(1)
+        # Скользящее среднее за 3 часа (сглаживает порывы)
+        out["hub_ws_roll_mean_3"] = out['ws_80m'].shift(1).rolling(3, min_periods=1).mean()
+
+    return out
 
 # =====================================================================
 # BASE
