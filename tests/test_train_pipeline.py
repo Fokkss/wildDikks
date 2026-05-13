@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from train import main as train_main
+from new_model.train import main as train_main
 
 
 def make_train_frame(n_rows: int = 80) -> pd.DataFrame:

@@ -26,7 +26,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
-from feature_engineering import (
+from new_model.feature_engineering import (
     FARM_CAPACITY_MW,
     available_capacity_from_raw,
     find_datetime_col,

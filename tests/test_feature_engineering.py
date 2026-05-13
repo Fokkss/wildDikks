@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from feature_engineering import (
+from new_model.feature_engineering import (
     FARM_CAPACITY_MW,
     N_TURBINES,
     available_capacity_from_raw,
