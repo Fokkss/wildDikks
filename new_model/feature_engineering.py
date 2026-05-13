@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -23,8 +22,25 @@ R_DRY_AIR = 287.05  # J/(kg*K)
 
 # Extend these lists for your exact schema if needed.
 KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "wind_speed": ("wind_speed", "windspeed", "wind speed", "ws", "speed", "скорость", "ветер"),
-    "wind_dir": ("wind_dir", "wind direction", "direction", "dir", "wd", "направ", "азимут", "румб"),
+    "wind_speed": (
+        "wind_speed",
+        "windspeed",
+        "wind speed",
+        "ws",
+        "speed",
+        "скорость",
+        "ветер",
+    ),
+    "wind_dir": (
+        "wind_dir",
+        "wind direction",
+        "direction",
+        "dir",
+        "wd",
+        "направ",
+        "азимут",
+        "румб",
+    ),
     "temp": ("temperature", "temp", "t2m", "температура", "темп"),
     "pressure": ("pressure", "press", "msl", "sp", "давление"),
     "precip": ("precip", "rain", "snow", "осад", "дожд", "снег"),
@@ -33,7 +49,15 @@ KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 DATE_KEYWORDS = ("datetime", "timestamp", "date", "time", "dt", "дата", "время")
-TARGET_KEYWORDS = ("результирующий", "выработка", "generation", "power", "target", "fact", "actual")
+TARGET_KEYWORDS = (
+    "результирующий",
+    "выработка",
+    "generation",
+    "power",
+    "target",
+    "fact",
+    "actual",
+)
 
 
 def _norm(s: str) -> str:
@@ -46,7 +70,12 @@ def find_datetime_col(df: pd.DataFrame) -> Optional[str]:
         n = _norm(col)
         if any(k in n for k in DATE_KEYWORDS):
             # Avoid treating already engineered hour/month columns as timestamps.
-            if "hour" not in n and "month" not in n and "час" not in n and "месяц" not in n:
+            if (
+                "hour" not in n
+                and "month" not in n
+                and "час" not in n
+                and "месяц" not in n
+            ):
                 return col
     return None
 
@@ -80,10 +109,15 @@ def find_target_col(df: pd.DataFrame, requested: Optional[str] = None) -> str:
 
 def _has_height(col_norm: str, height_m: int) -> bool:
     # Works for names such as wind_speed_80m, speed_80_m, Скорость ветра на 80 м.
-    return bool(re.search(rf"(^|_)({height_m})(m|м|meter|meters)?(_|$)", col_norm)) or str(height_m) in col_norm
+    return (
+        bool(re.search(rf"(^|_)({height_m})(m|м|meter|meters)?(_|$)", col_norm))
+        or str(height_m) in col_norm
+    )
 
 
-def find_col(df: pd.DataFrame, kind: str, height_m: Optional[int] = None) -> Optional[str]:
+def find_col(
+    df: pd.DataFrame, kind: str, height_m: Optional[int] = None
+) -> Optional[str]:
     keywords = KIND_KEYWORDS[kind]
     scored: list[tuple[int, str]] = []
     for col in df.columns:
@@ -117,7 +151,9 @@ def find_cols(df: pd.DataFrame, kind: str) -> list[str]:
     return out
 
 
-def _safe_divide(a: pd.Series | np.ndarray, b: pd.Series | np.ndarray, default: float = np.nan):
+def _safe_divide(
+    a: pd.Series | np.ndarray, b: pd.Series | np.ndarray, default: float = np.nan
+):
     with np.errstate(divide="ignore", invalid="ignore"):
         x = np.asarray(a, dtype=float) / np.asarray(b, dtype=float)
     x = np.where(np.isfinite(x), x, default)
@@ -166,21 +202,48 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Use existing month/hour columns if no timestamp exists.
     month_col = next((c for c in out.columns if _norm(c) in {"month", "месяц"}), None)
-    hour_col = next((c for c in out.columns if _norm(c) in {"hour", "hour_of_day", "час", "час_суток"}), None)
+    hour_col = next(
+        (
+            c
+            for c in out.columns
+            if _norm(c) in {"hour", "hour_of_day", "час", "час_суток"}
+        ),
+        None,
+    )
 
-    month = pd.to_numeric(out[month_col], errors="coerce") if month_col else out.get("month")
-    hour = pd.to_numeric(out[hour_col], errors="coerce") if hour_col else out.get("hour_of_day")
+    month = (
+        pd.to_numeric(out[month_col], errors="coerce")
+        if month_col
+        else out.get("month")
+    )
+    hour = (
+        pd.to_numeric(out[hour_col], errors="coerce")
+        if hour_col
+        else out.get("hour_of_day")
+    )
     dayofyear = out.get("dayofyear")
 
     if month is not None:
-        out["month_sin"] = np.sin(2.0 * np.pi * pd.to_numeric(month, errors="coerce") / 12.0)
-        out["month_cos"] = np.cos(2.0 * np.pi * pd.to_numeric(month, errors="coerce") / 12.0)
+        out["month_sin"] = np.sin(
+            2.0 * np.pi * pd.to_numeric(month, errors="coerce") / 12.0
+        )
+        out["month_cos"] = np.cos(
+            2.0 * np.pi * pd.to_numeric(month, errors="coerce") / 12.0
+        )
     if hour is not None:
-        out["hour_sin"] = np.sin(2.0 * np.pi * pd.to_numeric(hour, errors="coerce") / 24.0)
-        out["hour_cos"] = np.cos(2.0 * np.pi * pd.to_numeric(hour, errors="coerce") / 24.0)
+        out["hour_sin"] = np.sin(
+            2.0 * np.pi * pd.to_numeric(hour, errors="coerce") / 24.0
+        )
+        out["hour_cos"] = np.cos(
+            2.0 * np.pi * pd.to_numeric(hour, errors="coerce") / 24.0
+        )
     if dayofyear is not None:
-        out["doy_sin"] = np.sin(2.0 * np.pi * pd.to_numeric(dayofyear, errors="coerce") / 365.25)
-        out["doy_cos"] = np.cos(2.0 * np.pi * pd.to_numeric(dayofyear, errors="coerce") / 365.25)
+        out["doy_sin"] = np.sin(
+            2.0 * np.pi * pd.to_numeric(dayofyear, errors="coerce") / 365.25
+        )
+        out["doy_cos"] = np.cos(
+            2.0 * np.pi * pd.to_numeric(dayofyear, errors="coerce") / 365.25
+        )
     return out
 
 
@@ -188,7 +251,11 @@ def add_availability_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     repair_col = find_col(out, "repair")
     if repair_col is not None:
-        repair = pd.to_numeric(out[repair_col], errors="coerce").fillna(0.0).clip(0, N_TURBINES)
+        repair = (
+            pd.to_numeric(out[repair_col], errors="coerce")
+            .fillna(0.0)
+            .clip(0, N_TURBINES)
+        )
     else:
         repair = pd.Series(0.0, index=out.index)
     available_turbines = (N_TURBINES - repair).clip(0, N_TURBINES)
@@ -217,7 +284,10 @@ def add_wind_features(df: pd.DataFrame) -> pd.DataFrame:
         out["hub_ws_80m"] = v80
     elif speed[10] is not None and speed[120] is not None:
         alpha = pd.Series(
-            _safe_divide(np.log((speed[120].clip(lower=0.05)) / (speed[10].clip(lower=0.05))), math.log(120.0 / 10.0)),
+            _safe_divide(
+                np.log((speed[120].clip(lower=0.05)) / (speed[10].clip(lower=0.05))),
+                math.log(120.0 / 10.0),
+            ),
             index=out.index,
         ).clip(-0.5, 1.0)
         v80 = speed[10] * (80.0 / 10.0) ** alpha
@@ -229,8 +299,8 @@ def add_wind_features(df: pd.DataFrame) -> pd.DataFrame:
 
     if v80 is not None:
         v80 = pd.to_numeric(v80, errors="coerce")
-        out["hub_ws_80m_sq"] = v80 ** 2
-        out["hub_ws_80m_cube"] = v80 ** 3
+        out["hub_ws_80m_sq"] = v80**2
+        out["hub_ws_80m_cube"] = v80**3
         out["hub_ws_cut_in_proxy"] = (v80 >= 3.0).astype("float")
         out["hub_ws_rated_proxy"] = (v80 >= 12.0).astype("float")
         out["hub_ws_cut_out_proxy"] = (v80 >= 25.0).astype("float")
@@ -243,7 +313,9 @@ def add_wind_features(df: pd.DataFrame) -> pd.DataFrame:
             s1 = speed[h1].clip(lower=0.05)
             s2 = speed[h2].clip(lower=0.05)
             out[f"ws_diff_{h2}_{h1}"] = speed[h2] - speed[h1]
-            out[f"ws_ratio_{h2}_{h1}"] = pd.Series(_safe_divide(s2, s1), index=out.index).clip(0, 10)
+            out[f"ws_ratio_{h2}_{h1}"] = pd.Series(
+                _safe_divide(s2, s1), index=out.index
+            ).clip(0, 10)
             out[f"shear_alpha_{h1}_{h2}"] = pd.Series(
                 _safe_divide(np.log(s2 / s1), math.log(h2 / h1)), index=out.index
             ).clip(-0.5, 1.0)
@@ -257,8 +329,12 @@ def add_wind_features(df: pd.DataFrame) -> pd.DataFrame:
             out[f"wd_{h}m_sin"] = np.sin(rad)
             out[f"wd_{h}m_cos"] = np.cos(rad)
             if h == 80 and v80 is not None:
-                out["hub_ws_cube_x_wd_sin"] = (pd.to_numeric(v80, errors="coerce") ** 3) * out[f"wd_{h}m_sin"]
-                out["hub_ws_cube_x_wd_cos"] = (pd.to_numeric(v80, errors="coerce") ** 3) * out[f"wd_{h}m_cos"]
+                out["hub_ws_cube_x_wd_sin"] = (
+                    pd.to_numeric(v80, errors="coerce") ** 3
+                ) * out[f"wd_{h}m_sin"]
+                out["hub_ws_cube_x_wd_cos"] = (
+                    pd.to_numeric(v80, errors="coerce") ** 3
+                ) * out[f"wd_{h}m_cos"]
     for h1, h2 in ((10, 80), (80, 120), (80, 180), (10, 120)):
         if direction[h1] is not None and direction[h2] is not None:
             out[f"wd_diff_{h2}_{h1}"] = circular_diff_deg(direction[h2], direction[h1])
@@ -277,7 +353,12 @@ def add_wind_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_air_density_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    temp_col = find_col(out, "temp", 80) or find_col(out, "temp", 120) or find_col(out, "temp", 10) or find_col(out, "temp")
+    temp_col = (
+        find_col(out, "temp", 80)
+        or find_col(out, "temp", 120)
+        or find_col(out, "temp", 10)
+        or find_col(out, "temp")
+    )
     pressure_col = find_col(out, "pressure", 80) or find_col(out, "pressure")
     temp = _to_numeric_series(out, temp_col)
     pressure = _to_numeric_series(out, pressure_col)
@@ -299,7 +380,9 @@ def add_air_density_features(df: pd.DataFrame) -> pd.DataFrame:
         out["air_density_kg_m3_proxy"] = rho
         if "hub_ws_80m_cube" in out.columns:
             out["wind_power_density_proxy"] = 0.5 * rho * out["hub_ws_80m_cube"]
-            out["wind_power_density_x_availability"] = out["wind_power_density_proxy"] * out.get("availability_ratio", 1.0)
+            out["wind_power_density_x_availability"] = out[
+                "wind_power_density_proxy"
+            ] * out.get("availability_ratio", 1.0)
     elif temp_k is not None and pressure_pa is None:
         out["inverse_temp_k_proxy"] = 1.0 / temp_k
     return out
@@ -312,7 +395,9 @@ def add_weather_misc_features(df: pd.DataFrame) -> pd.DataFrame:
     if precip_cols:
         vals = out[precip_cols].apply(pd.to_numeric, errors="coerce")
         out["precip_sum_inferred"] = vals.sum(axis=1, min_count=1)
-        out["has_precip_inferred"] = (out["precip_sum_inferred"].fillna(0.0) > 0).astype("float")
+        out["has_precip_inferred"] = (
+            out["precip_sum_inferred"].fillna(0.0) > 0
+        ).astype("float")
     if cloud_cols:
         vals = out[cloud_cols].apply(pd.to_numeric, errors="coerce")
         out["cloud_mean_inferred"] = vals.mean(axis=1)
@@ -360,7 +445,9 @@ def available_capacity_from_raw(df: pd.DataFrame) -> pd.Series:
     repair_col = find_col(df, "repair")
     if repair_col is None:
         return pd.Series(FARM_CAPACITY_MW, index=df.index)
-    repair = pd.to_numeric(df[repair_col], errors="coerce").fillna(0.0).clip(0, N_TURBINES)
+    repair = (
+        pd.to_numeric(df[repair_col], errors="coerce").fillna(0.0).clip(0, N_TURBINES)
+    )
     cap = (N_TURBINES - repair) * TURBINE_CAPACITY_MW
     return cap.clip(0.0, FARM_CAPACITY_MW)
 

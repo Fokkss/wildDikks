@@ -2,9 +2,9 @@
 
 Example:
     python predict.py \
-        --features_path ../data/valid_features.csv \
-        --model_dir artifacts \
-        --output_path submission.csv
+      --features_path ../data/valid_features.csv \
+      --model_dir output/artifacts \
+      --output_path submission.csv
 """
 
 from __future__ import annotations
@@ -16,7 +16,11 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from feature_engineering import FARM_CAPACITY_MW, available_capacity_from_raw, make_features, sort_by_time_if_possible
+from new_model.feature_engineering import (
+    FARM_CAPACITY_MW,
+    available_capacity_from_raw,
+    make_features,
+)
 
 
 def load_csv(path: str) -> pd.DataFrame:
@@ -25,10 +29,18 @@ def load_csv(path: str) -> pd.DataFrame:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--features_path", required=True, help="Path to valid_features.csv")
-    parser.add_argument("--model_dir", default="artifacts", help="Directory with wind_xgb_model.joblib")
+    parser.add_argument(
+        "--features_path", required=True, help="Path to valid_features.csv"
+    )
+    parser.add_argument(
+        "--model_dir", default="artifacts", help="Directory with wind_xgb_model.joblib"
+    )
     parser.add_argument("--output_path", default="submission.csv")
-    parser.add_argument("--prediction_col", default="prediction", help="Name of the single prediction column")
+    parser.add_argument(
+        "--prediction_col",
+        default="prediction",
+        help="Name of the single prediction column",
+    )
     args = parser.parse_args()
 
     artifact_path = Path(args.model_dir) / "wind_xgb_model.joblib"
