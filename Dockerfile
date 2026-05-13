@@ -13,3 +13,7 @@ COPY src/ ./src/
 COPY tests/ ./tests/
 
 COPY for_plot/ ./for_plot/
+
+COPY new_model/ ./new_model/
+
+COPY pytest.ini .

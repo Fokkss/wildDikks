@@ -1,6 +1,4 @@
-import pytest
 import pandas as pd
-import os
 from for_plot.plotter import list_completer_factory
 
 

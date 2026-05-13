@@ -80,7 +80,8 @@ def plot_csv_data(file_path):
 
         num_plots = len(x_axes)
         fig, axes = plt.subplots(num_plots, 1, figsize=(10, 5 * num_plots), constrained_layout=True)
-        if num_plots == 1: axes = [axes]
+        if num_plots == 1:
+            axes = [axes]
 
         for i, x_col in enumerate(x_axes):
             sorted_df = df.sort_values(by=x_col)
@@ -104,7 +105,8 @@ def plot_csv_data(file_path):
 
             final_path = save_dir / out
 
-            with PdfPages(final_path) as pdf: pdf.savefig(fig)
+            with PdfPages(final_path) as pdf:
+                pdf.savefig(fig)
             print(f"Saved at: {os.path.abspath(out)}")
 
         plt.show()

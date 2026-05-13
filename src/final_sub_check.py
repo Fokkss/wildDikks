@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 
 def save_final_submission(predictions, filename="output/prediction.csv"):
