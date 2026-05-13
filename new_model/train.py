@@ -108,7 +108,7 @@ def main():
 
     joblib.dump(artifact, model_dir / "wind_xgb_model.joblib")
 
-    # Сохраняем топ фичей, чтобы физик видел, что работает, а что нет
+    # Сохраняем топ фичей
     importance = pd.DataFrame({"feature": feature_cols, "importance": model.feature_importances_})
     importance.sort_values("importance", ascending=False).to_csv(model_dir / "importance.csv", index=False)
 

@@ -50,33 +50,6 @@ def add_custom_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def add_custom_features(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    # 1. БАЗОВАЯ ФИЗИКА
-    if 'ws_80m' in out.columns:
-        out['wind_speed_cube'] = out['ws_80m'] ** 3
-        # Рабочая зона турбины (отсекаем лишнее)
-        out["hub_ws_piece_3_12"] = (out['ws_80m'].clip(3.0, 12.0) - 3.0).clip(lower=0.0)
-
-    if 'temp_k' in out.columns and 'pressure_pa' in out.columns:
-        out['air_density'] = out['pressure_pa'] / (config.R_DRY_AIR * out['temp_k'])
-
-        # Полная энергия ветрового потока: W = 0.5 * ρ * v^3
-        if 'wind_speed_cube' in out.columns:
-            out["wind_power_density"] = 0.5 * out['air_density'] * out['wind_speed_cube']
-
-    # 2. ВРЕМЕННАЯ ДИНАМИКА (ЛАГИ) - Возвращаем память модели!
-    if 'ws_80m' in out.columns:
-        # Сдвигаем на 1 строку вниз (значение прошлого часа)
-        out["hub_ws_lag1"] = out['ws_80m'].shift(1)
-        # Ускорение/замедление ветра
-        out["hub_ws_diff1"] = out['ws_80m'] - out['ws_80m'].shift(1)
-        # Скользящее среднее за 3 часа (сглаживает порывы)
-        out["hub_ws_roll_mean_3"] = out['ws_80m'].shift(1).rolling(3, min_periods=1).mean()
-
-    return out
-
 # =====================================================================
 # BASE
 # =====================================================================
@@ -94,10 +67,9 @@ def make_features(df: pd.DataFrame, target_col: str = None) -> pd.DataFrame:
     # 2. Находим и стандартизируем метеоданные
     out = _extract_weather(out)
 
-    # 3. Вызываем песочницу физика (все кастомные фичи считаются тут!)
     out = add_custom_features(out)
 
-    # 4. Превращаем текстовые колонки в числа (чтобы модель не падала)
+    # 4. Превращаем текстовые колонки в числа
     dt_col = find_datetime_col(out)
     for col in list(out.columns):
         if col == target_col or col == dt_col:
