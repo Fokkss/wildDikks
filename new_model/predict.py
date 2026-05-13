@@ -2,9 +2,9 @@
 
 Example:
     python predict.py \
-        --features_path ../data/valid_features.csv \
-        --model_dir artifacts \
-        --output_path submission.csv
+      --features_path ../data/valid_features.csv \
+      --model_dir output/artifacts \
+      --output_path submission.csv
 """
 
 from __future__ import annotations

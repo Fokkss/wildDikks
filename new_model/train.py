@@ -2,9 +2,12 @@
 
 Example:
     python train.py \
-        --train_path ../data/train_dataset.csv \
-        --model_dir artifacts \
-        --target "Результирующий расчет"
+      --train_path ../data/train_dataset.csv \
+      --model_dir output/artifacts \
+      --target "Результирующий расчет" \
+      --n_splits 2000 \
+      --n_estimators 2000 \
+      --early_stopping_rounds 10
 """
 
 from __future__ import annotations
@@ -43,11 +46,11 @@ def build_model(seed: int, n_estimators: int = 5000, early_stopping_rounds: int 
     params = dict(
         n_estimators=n_estimators,
         learning_rate=0.03,
-        max_depth=5,
-        min_child_weight=8,
+        max_depth=3,
+        min_child_weight=5,
         subsample=0.85,
         colsample_bytree=0.85,
-        reg_alpha=0.05,
+        reg_alpha=0.04,
         reg_lambda=5.0,
         objective="reg:absoluteerror",  # good default when leaderboard is MAE
         eval_metric="mae",
@@ -87,6 +90,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--capacity_mw", type=float, default=FARM_CAPACITY_MW)
+    parser.add_argument("--n_estimators", type=int, default=6000)
+    parser.add_argument("--early_stopping_rounds", type=int, default=150)
+
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -124,7 +130,11 @@ def main() -> None:
         X_train, X_val = X_imp.iloc[train_idx], X_imp.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
-        model = build_model(seed=args.seed + fold, n_estimators=6000, early_stopping_rounds=150)
+        model = build_model(
+            seed=args.seed + fold,
+            n_estimators=args.n_estimators,
+            early_stopping_rounds=args.early_stopping_rounds,
+        )
         model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
         pred = model.predict(X_val)
@@ -149,7 +159,7 @@ def main() -> None:
     print(f"Mean RMSE: {cv['rmse_mw'].mean():.4f} MW")
 
     # Train final model on all data with number of trees inferred from time-series CV.
-    final_estimators = int(np.clip(np.median(best_iterations) * 1.10, 300, 6000))
+    final_estimators = int(np.clip(np.median(best_iterations) * 1.10, 30, args.n_estimators))
     final_model = build_model(seed=args.seed, n_estimators=final_estimators, early_stopping_rounds=None)
     final_model.fit(X_imp, y, verbose=False)
 
