@@ -87,7 +87,7 @@ jobs:
             -v $(pwd)/output:/app/output \
             wind-app \
             python -m new_model.train \
-              --train_path data/train_dataset.csv \
+              --train_path tests/fixtures/train_dataset_small.csv \
               --model_dir output/artifacts \
               --target "Результирующий расчет" \
               --n_splits 2 \
@@ -101,7 +101,7 @@ jobs:
             -v $(pwd)/output:/app/output \
             wind-app \
             python -m new_model.predict \
-              --features_path data/valid_features.csv \
+              --features_path tests/fixtures/valid_features_small.csv \
               --model_dir output/artifacts \
               --output_path output/prediction.csv
 
