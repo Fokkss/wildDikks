@@ -1,19 +1,13 @@
-"""Train XGBoost model for wind farm hourly power forecasting.
-
-Example:
+"""Example:
     python -m new_model.train \
       --train_path data/train_dataset.csv \
       --model_dir output/artifacts \
       --cv
+    MyExample:
+    1) python -m new_model/train.py --train_path dataset/train_dataset.csv
+    2) python -m new_model/predict.py --features_path dataset/valid_features.csv --model_dir artifacts --output_path submission.csv
 """
 
-"""
-Запуск: python train.py --train_path ../dataset/train.csv
-python new_model/predict.py 
---features_path dataset/valid_features.csv 
---model_dir artifacts 
---output_path submission.csv
-"""
 import argparse
 import json
 from pathlib import Path
@@ -29,10 +23,9 @@ from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
 # Импорты из локальных файлов (без префикса new_model)
-from new_model.config import FARM_CAPACITY_MW
+from new_model.config import FARM_CAPACITY_MW, COLUMN_MAP
 from new_model.feature_engineering import (
     make_features,
-    find_target_col,
     available_capacity_from_raw,
     sort_by_time_if_possible,
 )
@@ -41,22 +34,25 @@ from new_model.feature_engineering import (
 def build_model(seed: int) -> XGBRegressor:
     """Инкапсуляция настроек модели. Возвращает готовый инстанс бустинга."""
     return XGBRegressor(
-        n_estimators=10000, # state 5000 on final
-        learning_rate=0.02,
-        max_depth=4,
-        min_child_weight = 10,
-        subsample = 0.85,
-        colsample_bytree = 0.75,
-        reg_alpha = 0.10,
-        reg_lambda = 6.0,
-        objective = "reg:absoluteerror",  # good default when Leaderboard is MAE
-        eval_metric = "mae",
-        tree_method = "hist",
-        max_bin = 256,
-        random_state = seed,
-        n_jobs = -1,
-        early_stopping_rounds=200,
+        n_estimators=5000,
+        learning_rate=0.01,
+        max_depth=7,
+        min_child_weight=5,
+        gamma=0.2,
+        subsample=0.7,
+        colsample_bytree=0.7,
+        reg_alpha=0.10,
+        reg_lambda=6.0,
+        objective="reg:absoluteerror",  # good default when Leaderboard is MAE
+        eval_metric="mae",
+        tree_method="hist",
+        max_bin=256,
+        random_state=seed,
+        n_jobs=-1,
+        # early_stopping_rounds=50,
     )
+
+
 # previous params
 # n_estimators = n_estimators,
 # learning_rate = 0.03,
@@ -73,9 +69,9 @@ def build_model(seed: int) -> XGBRegressor:
 # random_state = seed,
 # n_jobs = -1,
 
-#==========================================================
+# ==========================================================
 # VALIDATION OF DATA
-#==========================================================
+# ==========================================================
 def get_feature_columns(fe_df: pd.DataFrame, target_col: str) -> list[str]:
     """
     select numeric features only, excluding target.
@@ -86,12 +82,13 @@ def get_feature_columns(fe_df: pd.DataFrame, target_col: str) -> list[str]:
         if c != target_col and pd.api.types.is_numeric_dtype(fe_df[c])
     ]
 
+
 def time_holdout_score(
-    X: pd.DataFrame,
-    y: pd.Series,
-    raw_df: pd.DataFrame,
-    seed: int,
-    valid_size: float = 0.2,
+        X: pd.DataFrame,
+        y: pd.Series,
+        raw_df: pd.DataFrame,
+        seed: int,
+        valid_size: float = 0.2,
 ) -> float:
     """
     simple chronological holdout validation.
@@ -118,12 +115,13 @@ def time_holdout_score(
     mae = mean_absolute_error(y_valid, pred)
     return float(mae)
 
+
 def timeseries_cv_score(
-    X: pd.DataFrame,
-    y: pd.Series,
-    raw_df: pd.DataFrame,
-    seed: int,
-    n_splits: int = 5,
+        X: pd.DataFrame,
+        y: pd.Series,
+        raw_df: pd.DataFrame,
+        seed: int,
+        n_splits: int = 5,
 ) -> list[float]:
     """
     TimeSeriesSplit validation.
@@ -159,9 +157,10 @@ def timeseries_cv_score(
 
     return scores
 
-#==========================================================
+
+# ==========================================================
 # BEGIN TRAIN
-#==========================================================
+# ==========================================================
 def main():
     parser = argparse.ArgumentParser()
 
@@ -195,7 +194,16 @@ def main():
     print("sorting by time if datetime column exists...")
     raw_df = sort_by_time_if_possible(raw_df)
 
-    target_col = find_target_col(raw_df, "Результирующий расчет")
+    # [FIX] Более гибкий поиск целевой колонки
+    target_raw_name = next((k for k, v in COLUMN_MAP.items() if v == "target"), None)
+    if target_raw_name not in raw_df.columns:
+        # Если точного совпадения нет, ищем по ключевому слову
+        potential = [c for c in raw_df.columns if "Результирующий" in c] #.расчет
+        target_col = potential[0] if potential else target_raw_name
+    else:
+        target_col = target_raw_name
+
+    print(f"Target column identified as: {target_col}")
 
     # Извлекаем фичи через наш красивый движок
     print("generating features...")
@@ -275,7 +283,7 @@ def main():
     pred = np.clip(pred, 0.0, cap)
 
     mae = mean_absolute_error(y, pred)
-    print(f"[УСПЕХ] Внутренний MAE на трейне: {mae:.4f} MW")
+    print(f"[SUCCESS] Inner MAE on train: {mae:.4f} MW")
 
     artifact = {
         "model": model,
