@@ -154,7 +154,8 @@ jobs:
             wind-app \
             python -m new_model.train \
               --train_path tests/fixtures/train_dataset_small.csv \
-              --model_dir output/artifacts
+              --model_dir output/artifacts \
+              --cv
 
       - name: Predict validation
         run: |
