@@ -83,9 +83,9 @@ def main():
     feature_cols = [
         c
         for c in fe_df.columns
-        if c != target_col and not pd.api.types.is_numeric_dtype(fe_df[c])]
+        if c != target_col and pd.api.types.is_numeric_dtype(fe_df[c])]
 
-    X = fe_df[feature_cols]
+    X = fe_df[feature_cols].apply(pd.to_numeric, errors="coerce")
     y = pd.to_numeric(raw_df[target_col], errors="coerce").fillna(0)
 
     # 2. ИМПУТАЦИЯ (Заполнение пропусков)
@@ -106,7 +106,7 @@ def main():
         "model": model,
         "imputer": imputer,
         "feature_cols": feature_cols,
-        "capacity_mw": FARM_CAPACITY_MW
+        "capacity_mw": FARM_CAPACITY_MW,
     }
 
     joblib.dump(artifact, model_dir / "wind_xgb_model.joblib")
