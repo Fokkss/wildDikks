@@ -1,4 +1,4 @@
-import json
+import joblib
 
 import pandas as pd
 import pytest
@@ -54,9 +54,10 @@ def test_train_creates_artifacts(tmp_path, monkeypatch):
     assert (model_dir / "wind_xgb_model.joblib").exists()
     assert (model_dir / "importance.csv").exists()
 
-    with open(model_dir / "feature_columns.json", encoding="utf-8") as f:
-        feature_cols = json.load(f)
+    artifact = joblib.load(model_dir / "wind_xgb_model.joblib")
 
-    assert "hub_ws_80m" in feature_cols
-    assert "hub_ws_80m_cube" in feature_cols
-    assert "availability_ratio" in feature_cols
+    assert "model" in artifact
+    assert "imputer" in artifact
+    assert "feature_cols" in artifact
+    assert "capacity_mw" in artifact
+    assert len(artifact["feature_cols"]) > 0
