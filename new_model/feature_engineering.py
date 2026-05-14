@@ -4,8 +4,8 @@ import re
 
 import numpy as np
 import pandas as pd
-from keywords import KIND_KEYWORDS, DATE_KEYWORDS, TARGET_KEYWORDS
-import config
+from new_model import config
+from new_model.keywords import KIND_KEYWORDS, DATE_KEYWORDS, TARGET_KEYWORDS
 
 
 # =====================================================================

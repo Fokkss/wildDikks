@@ -16,9 +16,9 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from config import FARM_CAPACITY_MW
+from new_model.config import FARM_CAPACITY_MW
 
-from feature_engineering import (
+from new_model.feature_engineering import (
     available_capacity_from_raw,
     make_features,
 )

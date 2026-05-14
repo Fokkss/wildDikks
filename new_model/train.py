@@ -29,8 +29,8 @@ from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
 # Импорты из локальных файлов (без префикса new_model)
-import config
-from feature_engineering import make_features, find_target_col, available_capacity_from_raw
+from new_model.config import FARM_CAPACITY_MW
+from new_model.feature_engineering import make_features, find_target_col, available_capacity_from_raw
 
 
 def build_model(seed: int) -> XGBRegressor:
