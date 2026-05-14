@@ -1,8 +1,8 @@
 """Generate predictions for valid_features.csv.
 
 Example:
-    python predict.py \
-      --features_path ../data/valid_features.csv \
+    python -m new_model.predict \
+      --features_path data/valid_features.csv \
       --model_dir output/artifacts \
       --output_path submission.csv
 """
@@ -46,6 +46,7 @@ def main() -> None:
 
     artifact_path = Path(args.model_dir) / "wind_xgb_model.joblib"
     artifact = joblib.load(artifact_path)
+
     model = artifact["model"]
     imputer = artifact["imputer"]
     feature_cols = artifact["feature_cols"]
@@ -60,16 +61,22 @@ def main() -> None:
     for col in feature_cols:
         if col not in fe.columns:
             fe[col] = np.nan
-    X = fe[feature_cols]
-    X_imp = pd.DataFrame(imputer.transform(X), columns=feature_cols)
+
+    X = fe[feature_cols].apply(pd.to_numeric, errors="coerce")
+    X_imp = pd.DataFrame(
+        imputer.transform(X),
+        columns=feature_cols
+    )
 
     pred = model.predict(X_imp)
     row_cap = available_capacity_from_raw(raw).fillna(capacity_mw).to_numpy()
     row_cap = np.minimum(row_cap, capacity_mw)
+
     pred = np.clip(pred, 0.0, row_cap)
 
     out = pd.DataFrame({args.prediction_col: pred})
     out.to_csv(args.output_path, index=False)
+
     print(f"Saved {len(out)} predictions to: {args.output_path}")
 
 

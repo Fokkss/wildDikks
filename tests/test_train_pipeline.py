@@ -46,6 +46,7 @@ def test_train_creates_artifacts(tmp_path, monkeypatch):
             str(train_path),
             "--model_dir",
             str(model_dir),
+            "--cv",
         ],
     )
 
