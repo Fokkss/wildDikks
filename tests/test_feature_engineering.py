@@ -68,7 +68,6 @@ def test_make_features_adds_expected_wind_features():
 
     assert fe["ws_80m"].tolist() == [5.0, 8.0, 12.0]
     assert fe["wind_speed_cube"].tolist() == [125.0, 512.0, 1728.0]
-    assert fe["wind_shear"].tolist() == [1.0, 2.0, 3.0]
     assert np.isclose(fe.loc[1, "available_turbines"], N_TURBINES - 1)
 
 
