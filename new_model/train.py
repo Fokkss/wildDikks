@@ -83,7 +83,7 @@ def main():
     feature_cols = [
         c
         for c in fe_df.columns
-        if c != target_col and not np.api.types.is_numeric_dtype(fe_df[c])]
+        if c != target_col and not pd.api.types.is_numeric_dtype(fe_df[c])]
 
     X = fe_df[feature_cols]
     y = pd.to_numeric(raw_df[target_col], errors="coerce").fillna(0)
