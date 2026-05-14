@@ -80,7 +80,10 @@ def main():
 
     # Выделяем матрицу признаков (X) и ответы (y)
     # Исключаем целевую переменную и колонку с датой (коды категорий уже числа)
-    feature_cols = [c for c in fe_df.columns if c != target_col and not np.issubdtype(fe_df[c].dtype, np.datetime64)]
+    feature_cols = [
+        c
+        for c in fe_df.columns
+        if c != target_col and not np.is_numeric_dtype(fe_df[c])]
 
     X = fe_df[feature_cols]
     y = pd.to_numeric(raw_df[target_col], errors="coerce").fillna(0)
