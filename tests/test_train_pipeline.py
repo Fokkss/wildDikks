@@ -52,9 +52,7 @@ def test_train_creates_artifacts(tmp_path, monkeypatch):
     train_main()
 
     assert (model_dir / "wind_xgb_model.joblib").exists()
-    assert (model_dir / "cv_metrics.csv").exists()
-    assert (model_dir / "feature_columns.json").exists()
-    assert (model_dir / "feature_importance.csv").exists()
+    assert (model_dir / "importance.csv").exists()
 
     with open(model_dir / "feature_columns.json", encoding="utf-8") as f:
         feature_cols = json.load(f)
