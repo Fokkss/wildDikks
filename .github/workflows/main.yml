@@ -154,11 +154,7 @@ jobs:
             wind-app \
             python -m new_model.train \
               --train_path tests/fixtures/train_dataset_small.csv \
-              --model_dir output/artifacts \
-              --target "Результирующий расчет" \
-              --n_splits 2 \
-              --n_estimators 50 \
-              --early_stopping_rounds 10
+              --model_dir output/artifacts
 
       - name: Predict validation
         run: |

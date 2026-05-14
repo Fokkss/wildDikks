@@ -103,7 +103,7 @@ def main():
         "model": model,
         "imputer": imputer,
         "feature_cols": feature_cols,
-        "capacity_mw": config.FARM_CAPACITY_MW
+        "capacity_mw": FARM_CAPACITY_MW
     }
 
     joblib.dump(artifact, model_dir / "wind_xgb_model.joblib")
