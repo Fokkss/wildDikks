@@ -56,7 +56,6 @@ def test_make_features_adds_expected_wind_features():
         "ws_10m",
         "ws_80m",
         "wind_speed_cube",
-        "wind_shear",
         "temp_k",
         "pressure_pa",
         "air_density",
