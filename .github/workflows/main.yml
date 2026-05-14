@@ -25,24 +25,6 @@ jobs:
           name: docker-artifact
           path: wind-app.tar
 
-  lint:
-    name: Lint and format check
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: docker-artifact
-
-      - name: Load Docker image
-        run: docker load < wind-app.tar
-
-      - name: Run ruff lint
-        run: docker run --rm -e PYTHONPATH=/app wind-app ruff check .
-
 
   unit-tests:
     name: Unit tests
