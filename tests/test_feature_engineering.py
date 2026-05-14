@@ -1,9 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from new_model.config import FARM_CAPACITY_MW, N_TURBINES
 from new_model.feature_engineering import (
-    FARM_CAPACITY_MW,
-    N_TURBINES,
     available_capacity_from_raw,
     find_datetime_col,
     find_target_col,
@@ -38,6 +37,7 @@ def test_make_features_adds_expected_wind_features():
     df = pd.DataFrame(
         {
             "timestamp": pd.date_range("2024-01-01", periods=3, freq="h"),
+            "wind_speed_10m": [4.0, 6.0, 9.0],
             "wind_speed_80m": [5.0, 8.0, 12.0],
             "wind_dir_80m": [0.0, 90.0, 180.0],
             "temperature_80m": [5.0, 6.0, 7.0],
@@ -49,28 +49,27 @@ def test_make_features_adds_expected_wind_features():
     fe = make_features(df)
 
     expected_cols = {
-        "month_sin",
-        "month_cos",
+        "hour_of_day",
+        "month",
         "hour_sin",
         "hour_cos",
-        "hub_ws_80m",
-        "hub_ws_80m_cube",
-        "hub_ws_cut_in_proxy",
-        "hub_ws_piece_3_12",
-        "wd_80m_sin",
-        "wd_80m_cos",
+        "ws_10m",
+        "ws_80m",
+        "wind_speed_cube",
+        "wind_shear",
+        "temp_k",
+        "pressure_pa",
+        "air_density",
         "available_turbines",
-        "availability_ratio",
         "available_capacity_mw",
-        "air_density_kg_m3_proxy",
-        "wind_power_density_proxy",
     }
 
     missing = expected_cols - set(fe.columns)
     assert not missing, f"Missing engineered columns: {missing}"
 
-    assert fe["hub_ws_80m"].tolist() == [5.0, 8.0, 12.0]
-    assert np.isclose(fe.loc[0, "availability_ratio"], 1.0)
+    assert fe["ws_80m"].tolist() == [5.0, 8.0, 12.0]
+    assert fe["wind_speed_cube"].tolist() == [125.0, 512.0, 1728.0]
+    assert fe["wind_shear"].tolist() == [1.0, 2.0, 3.0]
     assert np.isclose(fe.loc[1, "available_turbines"], N_TURBINES - 1)
 
 

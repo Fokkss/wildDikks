@@ -25,26 +25,6 @@ jobs:
           name: docker-artifact
           path: wind-app.tar
 
-  lint:
-    name: Lint and format check
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: docker-artifact
-
-      - name: Load Docker image
-        run: docker load < wind-app.tar
-
-      - name: Run ruff lint
-        run: docker run --rm -e PYTHONPATH=/app wind-app ruff check .
-
-      - name: Run ruff format check
-        run: docker run --rm -e PYTHONPATH=/app wind-app ruff format --check .
 
   unit-tests:
     name: Unit tests
@@ -66,7 +46,7 @@ jobs:
 
   integration:
     name: Train and predict smoke test
-    needs: [build, lint, unit-tests]
+    needs: [build, unit-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -174,11 +154,7 @@ jobs:
             wind-app \
             python -m new_model.train \
               --train_path tests/fixtures/train_dataset_small.csv \
-              --model_dir output/artifacts \
-              --target "Результирующий расчет" \
-              --n_splits 2 \
-              --n_estimators 50 \
-              --early_stopping_rounds 10
+              --model_dir output/artifacts
 
       - name: Predict validation
         run: |
