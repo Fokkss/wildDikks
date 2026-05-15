@@ -1,317 +1,223 @@
-"""Train XGBoost model for wind farm hourly power forecasting.
-
-Example:
-    python -m new_model.train \
+"""
+python -m new_model.train \
       --train_path data/train_dataset.csv \
-      --model_dir output/artifacts \
-      --cv
+      --model_dir artifacts \
+      --seed 42 \
+      --valid_size 0.2 \
+      --catboost_weight 0.5 \
+      --xgboost_weight 0.5
 """
 
-"""
-Запуск: python train.py --train_path ../dataset/train.csv
-python new_model/predict.py 
---features_path dataset/valid_features.csv 
---model_dir artifacts 
---output_path submission.csv
-"""
+from __future__ import annotations
+
 import argparse
 import json
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import TimeSeriesSplit
-
-from xgboost import XGBRegressor
-
-# Импорты из локальных файлов (без префикса new_model)
-from new_model.config import FARM_CAPACITY_MW
-from new_model.feature_engineering import (
-    make_features,
-    find_target_col,
-    available_capacity_from_raw,
-    sort_by_time_if_possible,
+from new_model.config import (
+    TARGET_COL,
+    FARM_CAPACITY_MW,
+    read_csv,
+    normalize_columns,
+    sort_by_datetime_if_possible,
+    clip_predictions_to_available_capacity,
+    competition_error_percent,
 )
 
+from models import WeightedEnsembleModel
 
-def build_model(seed: int) -> XGBRegressor:
-    """Инкапсуляция настроек модели. Возвращает готовый инстанс бустинга."""
-    return XGBRegressor(
-        n_estimators=10000, # state 5000 on final
-        learning_rate=0.02,
-        max_depth=4,
-        min_child_weight = 10,
-        subsample = 0.85,
-        colsample_bytree = 0.75,
-        reg_alpha = 0.10,
-        reg_lambda = 6.0,
-        objective = "reg:absoluteerror",  # good default when Leaderboard is MAE
-        eval_metric = "mae",
-        tree_method = "hist",
-        max_bin = 256,
-        random_state = seed,
-        n_jobs = -1,
-        early_stopping_rounds=200,
-    )
-# previous params
-# n_estimators = n_estimators,
-# learning_rate = 0.03,
-# max_depth = 3,
-# min_child_weight = 5,
-# subsample = 0.85,
-# colsample_bytree = 0.85,
-# reg_alpha = 0.04,
-# reg_lambda = 5.0,
-# objective = "reg:absoluteerror",  # good default when leaderboard is MAE
-# eval_metric = "mae",
-# tree_method = "hist",
-# max_bin = 256,
-# random_state = seed,
-# n_jobs = -1,
 
-#==========================================================
-# VALIDATION OF DATA
-#==========================================================
-def get_feature_columns(fe_df: pd.DataFrame, target_col: str) -> list[str]:
-    """
-    select numeric features only, excluding target.
-    """
-    return [
-        c
-        for c in fe_df.columns
-        if c != target_col and pd.api.types.is_numeric_dtype(fe_df[c])
-    ]
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train CatBoost + XGBoost ensemble.")
 
-def time_holdout_score(
-    X: pd.DataFrame,
-    y: pd.Series,
-    raw_df: pd.DataFrame,
-    seed: int,
-    valid_size: float = 0.2,
-) -> float:
-    """
-    simple chronological holdout validation.
-    last valid_size fraction is used as validation set.
-    """
-    split_idx = int(len(X) * (1.0 - valid_size))
-
-    X_train, X_valid = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_valid = y.iloc[:split_idx], y.iloc[split_idx:]
-
-    model = build_model(seed=seed)
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_valid, y_valid)],
-        verbose=100,
+    parser.add_argument(
+        "--train_path",
+        required=True,
+        help="Path to train_dataset.csv",
     )
 
-    pred = model.predict(X_valid)
+    parser.add_argument(
+        "--model_dir",
+        default="artifacts",
+        help="Directory where model and metrics will be saved.",
+    )
 
-    valid_cap = available_capacity_from_raw(raw_df.iloc[split_idx:]).to_numpy()
-    pred = np.clip(pred, 0.0, valid_cap)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed.",
+    )
 
-    mae = mean_absolute_error(y_valid, pred)
-    return float(mae)
+    parser.add_argument(
+        "--valid_size",
+        type=float,
+        default=0.2,
+        help="Last fraction of chronological data used for local validation.",
+    )
 
-def timeseries_cv_score(
-    X: pd.DataFrame,
-    y: pd.Series,
-    raw_df: pd.DataFrame,
-    seed: int,
-    n_splits: int = 5,
-) -> list[float]:
-    """
-    TimeSeriesSplit validation.
-    This is more reliable than random split for forecasting.
-    """
-    tscv = TimeSeriesSplit(n_splits=n_splits)
-    scores: list[float] = []
+    parser.add_argument(
+        "--catboost_weight",
+        type=float,
+        default=0.5,
+        help="Weight of CatBoost predictions in ensemble.",
+    )
 
-    for fold, (train_idx, valid_idx) in enumerate(tscv.split(X), start=1):
-        X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
-        y_train, y_valid = y.iloc[train_idx], y.iloc[valid_idx]
+    parser.add_argument(
+        "--xgboost_weight",
+        type=float,
+        default=0.5,
+        help="Weight of XGBoost predictions in ensemble.",
+    )
 
-        model = build_model(seed=seed + fold)
-        model.fit(
-            X_train,
-            y_train,
-            eval_set=[(X_valid, y_valid)],
-            verbose=False,
+    return parser.parse_args()
+
+
+def ensure_target_exists(df: pd.DataFrame) -> None:
+    if TARGET_COL not in df.columns:
+        raise ValueError(
+            f"Target column was not found after normalization. "
+            f"Expected normalized target column: {TARGET_COL!r}. "
+            f"Available columns: {list(df.columns)}"
         )
 
-        pred = model.predict(X_valid)
 
-        valid_cap = available_capacity_from_raw(raw_df.iloc[valid_idx]).to_numpy()
-        pred = np.clip(pred, 0.0, valid_cap)
+def split_chronological(
+    df: pd.DataFrame,
+    valid_size: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not 0.0 < valid_size < 0.9:
+        raise ValueError("--valid_size must be between 0.0 and 0.9")
 
-        mae = mean_absolute_error(y_valid, pred)
-        scores.append(float(mae))
+    split_idx = int(len(df) * (1.0 - valid_size))
 
-        print(f"[CV] Fold {fold}: MAE = {mae:.4f} MW")
+    train_part = df.iloc[:split_idx].reset_index(drop=True)
+    valid_part = df.iloc[split_idx:].reset_index(drop=True)
 
-    print(f"[CV] Mean MAE: {np.mean(scores):.4f} MW")
-    print(f"[CV] Std MAE:  {np.std(scores):.4f} MW")
+    return train_part, valid_part
 
-    return scores
 
-#==========================================================
-# BEGIN TRAIN
-#==========================================================
-def main():
-    parser = argparse.ArgumentParser()
+def save_feature_importance(
+    model: WeightedEnsembleModel,
+    model_dir: Path,
+) -> None:
+    try:
+        importances = model.get_feature_importance()
 
-    parser.add_argument("--train_path",
-                        required=True,
-                        help="Путь к обучающим данным")
-    parser.add_argument("--model_dir",
-                        default="artifacts",
-                        help="Куда сохранять веса")
-    parser.add_argument("--seed",
-                        type=int, default=42,
-                        help="Seed")
-    parser.add_argument("--cv",
-                        action="store_true",
-                        help="Run TimeSeriesSplit CV before final training")
-    parser.add_argument(
-        "--n_splits",
-        type=int,
-        default=5,
-        help="Number of TimeSeriesSplit folds",
-    )
-    args = parser.parse_args()
+        for model_name, importance_df in importances.items():
+            importance_df.to_csv(
+                model_dir / f"importance_{model_name}.csv",
+                index=False,
+            )
 
-    # 1. ПОДГОТОВКА И ДАННЫЕ
+    except Exception as exc:
+        print(f"[WARN] Could not save feature importance: {exc}")
+
+
+def main() -> None:
+    args = parse_args()
+
+    np.random.seed(args.seed)
+
     model_dir = Path(args.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    print("loading data...")
-    raw_df = pd.read_csv(args.train_path, encoding="utf-8-sig")
+    print("[1/6] Loading train data...")
+    raw_df = read_csv(args.train_path)
 
-    print("sorting by time if datetime column exists...")
-    raw_df = sort_by_time_if_possible(raw_df)
+    print("[2/6] Normalizing columns...")
+    df = normalize_columns(raw_df)
+    ensure_target_exists(df)
 
-    target_col = find_target_col(raw_df, "Результирующий расчет")
+    print("[3/6] Sorting train data by datetime...")
+    df = sort_by_datetime_if_possible(df)
 
-    # Извлекаем фичи через наш красивый движок
-    print("generating features...")
-    fe_df = make_features(raw_df, target_col=target_col)
+    print(f"Rows: {len(df)}")
+    print(f"Columns: {len(df.columns)}")
+    print(f"Target: {TARGET_COL}")
+    print(f"Farm capacity MW: {FARM_CAPACITY_MW}")
 
-    # Выделяем матрицу признаков (X) и ответы (y)
-    # Исключаем целевую переменную и колонку с датой (коды категорий уже числа)
-    feature_cols = get_feature_columns(fe_df, target_col)
-
-    X = fe_df[feature_cols].apply(pd.to_numeric, errors="coerce")
-
-    # target cleaning and physical clipping
-    row_cap = available_capacity_from_raw(raw_df)
-    y = pd.to_numeric(raw_df[target_col], errors="coerce")
-    y = y.clip(lower=0.0, upper=row_cap)
-
-    # Remove rows without target
-    mask = y.notna()
-    X = X.loc[mask].reset_index(drop=True)
-    y = y.loc[mask].reset_index(drop=True)
-    raw_df = raw_df.loc[mask].reset_index(drop=True)
-
-    # logger (preferred to move to other class and flag for log / e.g. --log /)
-    print(f"rows: {len(X)}")
-    print(f"features: {len(feature_cols)}")
-
-    print("Fitting imputer...")
-    imputer = SimpleImputer(strategy="median")
-    X_imp = pd.DataFrame(
-        imputer.fit_transform(X),
-        columns=feature_cols,
+    train_part, valid_part = split_chronological(
+        df=df,
+        valid_size=args.valid_size,
     )
 
-    # validation
-    print("running chronological holdout validation...")
-    holdout_mae = time_holdout_score(
-        X=X_imp,
-        y=y,
-        raw_df=raw_df,
-        seed=args.seed,
-        valid_size=0.2,
-    )
-    print(f"[HOLDOUT] MAE: {holdout_mae:.4f} MW")
+    print(f"Train rows: {len(train_part)}")
+    print(f"Local valid rows: {len(valid_part)}")
 
-    cv_scores = None
-    if args.cv:
-        print("running TimeSeriesSplit CV...")
-        cv_scores = timeseries_cv_score(
-            X=X_imp,
-            y=y,
-            raw_df=raw_df,
-            seed=args.seed,
-            n_splits=args.n_splits,
-        )
-
-    # 3. ОБУЧЕНИЕ (Упрощенная валидация)
-    print("training final model on all data...")
-    model = build_model(seed=args.seed)
-    split_idx = int(len(X_imp) * 0.9)
-
-    X_train = X_imp.iloc[:split_idx]
-    X_valid = X_imp.iloc[split_idx:]
-
-    y_train = y.iloc[:split_idx]
-    y_valid = y.iloc[split_idx:]
-
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_valid, y_valid)],
-        verbose=100,
+    print("[4/6] Training temporary validation model...")
+    validation_model = WeightedEnsembleModel(
+        catboost_weight=args.catboost_weight,
+        xgboost_weight=args.xgboost_weight,
     )
 
-    # Оценка на тренировочной выборке (просто чтобы убедиться, что учится)
-    pred = model.predict(X_imp)
-    cap = available_capacity_from_raw(raw_df).to_numpy()
-    pred = np.clip(pred, 0.0, cap)
+    validation_model.fit(
+        train_df=train_part,
+        valid_df=valid_part,
+    )
 
-    mae = mean_absolute_error(y, pred)
-    print(f"[УСПЕХ] Внутренний MAE на трейне: {mae:.4f} MW")
+    y_valid = pd.to_numeric(valid_part[TARGET_COL], errors="coerce")
+    valid_pred = validation_model.predict(valid_part)
+    valid_pred = clip_predictions_to_available_capacity(valid_pred, valid_part)
 
-    artifact = {
-        "model": model,
-        "imputer": imputer,
-        "feature_cols": feature_cols,
-        "capacity_mw": FARM_CAPACITY_MW,
-        "target_col": target_col,
-        "seed": args.seed,
-        "holdout_mae": holdout_mae,
-        "cv_scores": cv_scores,
-    }
+    valid_error_percent = competition_error_percent(y_valid, valid_pred)
+    valid_mae_mw = float(np.mean(np.abs(y_valid.to_numpy() - valid_pred)))
 
-    joblib.dump(artifact, model_dir / "wind_xgb_model.joblib")
+    print(f"[LOCAL VALID] MAE: {valid_mae_mw:.4f} MW")
+    print(f"[LOCAL VALID] Competition error: {valid_error_percent:.4f}%")
 
-    # Сохраняем топ фичей
-    importance = pd.DataFrame(
+    pd.DataFrame(
         {
-            "feature": feature_cols,
-            "importance": model.feature_importances_}
-    ).sort_values("importance", ascending=False).to_csv(model_dir / "importance.csv", index=False)
+            "actual": y_valid,
+            "prediction": valid_pred,
+            "abs_error": np.abs(y_valid.to_numpy() - valid_pred),
+        }
+    ).to_csv(model_dir / "local_validation_predictions.csv", index=False)
+
+    print("[5/6] Training final model on ALL available train data...")
+    final_model = WeightedEnsembleModel(
+        catboost_weight=args.catboost_weight,
+        xgboost_weight=args.xgboost_weight,
+    )
+
+    final_model.fit(train_df=df)
+
+    final_model_path = model_dir / "ensemble.pkl"
+    final_model.save(final_model_path)
+
+    print(f"Saved model: {final_model_path}")
+
+    print("[6/6] Saving metrics and feature importances...")
+    train_y = pd.to_numeric(df[TARGET_COL], errors="coerce")
+    train_pred = final_model.predict(df)
+    train_pred = clip_predictions_to_available_capacity(train_pred, df)
+
+    train_error_percent = competition_error_percent(train_y, train_pred)
+    train_mae_mw = float(np.mean(np.abs(train_y.to_numpy() - train_pred)))
 
     metrics = {
-        "train_mae": mae,
-        "holdout_mae": holdout_mae,
-        "cv_scores": cv_scores,
-        "feature_count": len(feature_cols),
-        "rows": len(X),
+        "seed": args.seed,
+        "rows": int(len(df)),
+        "valid_size": args.valid_size,
+        "catboost_weight": args.catboost_weight,
+        "xgboost_weight": args.xgboost_weight,
+        "local_valid_mae_mw": valid_mae_mw,
+        "local_valid_competition_error_percent": valid_error_percent,
+        "train_mae_mw": train_mae_mw,
+        "train_competition_error_percent": train_error_percent,
+        "model_path": str(final_model_path),
     }
 
     with open(model_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
-    print(f"artifacts saved to: {model_dir}")
-    print(f"model: {model_dir / 'wind_xgb_model.joblib'}")
-    print(f"importance: {model_dir / 'importance.csv'}")
-    print(f"metrics: {model_dir / 'metrics.json'}")
+    save_feature_importance(final_model, model_dir)
+
+    print("Done.")
+    print(f"Metrics: {model_dir / 'metrics.json'}")
 
 
 if __name__ == "__main__":
