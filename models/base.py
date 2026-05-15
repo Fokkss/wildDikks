@@ -20,6 +20,12 @@ INSTALLED_CAPACITY_MW = 90.09
 N_TURBINES = 26
 TURBINE_CAPACITY_MW = INSTALLED_CAPACITY_MW / N_TURBINES
 R_DRY_AIR = 287.05
+STANDARD_AIR_DENSITY = 1.225  # kg/m^3
+BETZ_LIMIT_CP = 16.0 / 27.0   # ≈ 0.593, theoretical max efficiency
+
+
+ROTOR_DIAMETER_M = 132.0
+ROTOR_SWEPT_AREA_M2 = np.pi * (ROTOR_DIAMETER_M / 2.0) ** 2
 
 
 # Названия, которые приводим к нормальному виду.
@@ -37,6 +43,9 @@ DEFAULT_FEATURE_FLAGS = {
     "power_curve": True,
     "air_density": True,
     "wind_power_density": True,
+    "density_adjusted_power": True,
+    "wind_direction": True,
+    "betz_limit": True,
 }
 
 
@@ -104,6 +113,41 @@ def _find_wind_speed_col(df: pd.DataFrame, height_m: int) -> str | None:
         )
 
         if has_speed and has_height and not is_direction:
+            score = 0
+            if f"{height}m" in n or f"{height}_m" in n:
+                score += 2
+            candidates.append((score, col))
+
+    if not candidates:
+        return None
+
+    return sorted(candidates, key=lambda x: -x[0])[0][1]
+
+
+def _find_wind_direction_col(df: pd.DataFrame, height_m: int) -> str | None:
+    height = str(height_m)
+
+    candidates: list[tuple[int, str]] = []
+
+    for col in df.columns:
+        n = _norm_col(col)
+
+        has_direction = (
+            "wind_direction" in n
+            or "wind_dir" in n
+            or "direction" in n
+            or "dir" in n
+            or "направ" in n
+        )
+        has_height = height in n
+        is_speed = (
+            "wind_speed" in n
+            or "windspeed" in n
+            or "speed" in n
+            or "скорость" in n
+        )
+
+        if has_direction and has_height and not is_speed:
             score = 0
             if f"{height}m" in n or f"{height}_m" in n:
                 score += 2
@@ -252,6 +296,11 @@ class ModelPreprocessor:
 
         df = df.copy()
 
+        # OSPREY checking needed
+        # :NOTE: should we consider 80m --> 84m ?
+        # :NOTE: !wake effect - really needed
+        # :NOTE: lugs
+        # :NOTE: Bets limit
         # ------------------------------------------------------------
         # 1. Time features
         # ------------------------------------------------------------
@@ -356,6 +405,119 @@ class ModelPreprocessor:
                 and "ws80_cube" in df.columns
         ):
             df["wind_power_density"] = 0.5 * df["air_density"] * df["ws80_cube"]
+
+        # ------------------------------------------------------------
+        # 6. Density-adjusted expected power
+        # ------------------------------------------------------------
+        if (
+                self._flag("density_adjusted_power")
+                and "expected_power_proxy" in df.columns
+                and "air_density" in df.columns
+        ):
+            df["expected_power_density_adj"] = (
+                    df["expected_power_proxy"]
+                    * df["air_density"]
+                    / STANDARD_AIR_DENSITY
+            )
+
+        # ------------------------------------------------------------
+        # 7. Wind direction features
+        # ------------------------------------------------------------
+        wind_dir_80m_col = _find_wind_direction_col(df, 80)
+
+        if self._flag("wind_direction") and wind_dir_80m_col is not None:
+            """
+            :NOTE: provides theese new features
+            wind_dir_80m_sin
+            wind_dir_80m_cos
+            wind_sector_8
+            wind_sector_16
+            ws80_cube_x_dir_sin
+            ws80_cube_x_dir_cos
+            power_curve_x_sector_8
+            power_curve_x_sector_16
+            """
+            wind_dir_raw = pd.to_numeric(df[wind_dir_80m_col], errors="coerce")
+
+            # ВАЖНО:
+            # В данных направление ветра хранится как degrees / 1000.
+            # Например:
+            #   0.273 -> 273 degrees
+            #   0.099 -> 99 degrees
+            wind_dir_80m_deg = (wind_dir_raw * 1000.0) % 360.0
+            wind_dir_80m_rad = np.deg2rad(wind_dir_80m_deg)
+
+            df["wind_dir_80m_sin"] = np.sin(wind_dir_80m_rad)
+            df["wind_dir_80m_cos"] = np.cos(wind_dir_80m_rad)
+
+            df["wind_sector_8"] = (wind_dir_80m_deg // 45.0).astype(float)
+            df["wind_sector_16"] = (wind_dir_80m_deg // 22.5).astype(float)
+
+            if "ws80_cube" in df.columns:
+                df["ws80_cube_x_dir_sin"] = (
+                        df["ws80_cube"] * df["wind_dir_80m_sin"]
+                )
+                df["ws80_cube_x_dir_cos"] = (
+                        df["ws80_cube"] * df["wind_dir_80m_cos"]
+                )
+
+            if "power_curve_proxy" in df.columns:
+                df["power_curve_x_sector_8"] = (
+                        df["power_curve_proxy"] * df["wind_sector_8"]
+                )
+                df["power_curve_x_sector_16"] = (
+                        df["power_curve_proxy"] * df["wind_sector_16"]
+                )
+
+        # ------------------------------------------------------------
+        # 8. Betz limit features
+        # ------------------------------------------------------------
+        if (
+                self._flag("betz_limit")
+                and "air_density" in df.columns
+                and "ws80_cube" in df.columns
+        ):
+            # Теоретический максимум мощности с одной турбины по лимиту Беца:
+            # P = 0.5 * rho * A * v^3 * Cp
+            # где Cp <= 16/27.
+            betz_power_one_turbine_mw = (
+                    0.5
+                    * df["air_density"]
+                    * ROTOR_SWEPT_AREA_M2
+                    * df["ws80_cube"]
+                    * BETZ_LIMIT_CP
+                    / 1_000_000.0
+            )
+
+            df["betz_power_one_turbine_mw"] = betz_power_one_turbine_mw
+
+            if "available_turbines" in df.columns:
+                df["betz_power_farm_mw"] = (
+                        df["betz_power_one_turbine_mw"] * df["available_turbines"]
+                )
+            else:
+                df["betz_power_farm_mw"] = (
+                        df["betz_power_one_turbine_mw"] * N_TURBINES
+                )
+
+            # Физически станция всё равно не может выдать выше установленной мощности.
+            if "available_capacity_mw" in df.columns:
+                df["betz_power_farm_clipped_mw"] = np.minimum(
+                    df["betz_power_farm_mw"],
+                    df["available_capacity_mw"],
+                )
+            else:
+                df["betz_power_farm_clipped_mw"] = np.minimum(
+                    df["betz_power_farm_mw"],
+                    INSTALLED_CAPACITY_MW,
+                )
+
+            # Насколько наш простой proxy близок к физическому максимуму.
+            if "expected_power_proxy" in df.columns:
+                df["expected_to_betz_ratio"] = (
+                        df["expected_power_proxy"]
+                        / (df["betz_power_farm_clipped_mw"] + 1e-6)
+                )
 
         return df.replace([np.inf, -np.inf], np.nan)
 
