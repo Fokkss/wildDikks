@@ -38,7 +38,7 @@ class XGBoostWindModel(BaseWindModel):
     def default_params(self) -> dict[str, Any]:
         return {
             "objective": "reg:absoluteerror",
-            "n_estimators": 2100,
+            "n_estimators": 1200,
             "learning_rate": 0.01,
             "max_depth": 5,
             "min_child_weight": 8,
@@ -48,7 +48,7 @@ class XGBoostWindModel(BaseWindModel):
             "reg_lambda": 4.7,
             "random_state": self.random_seed,
             "tree_method": "hist",
-            "n_jobs": -1,
+            "n_jobs": 4,
         }
 
     def fit(

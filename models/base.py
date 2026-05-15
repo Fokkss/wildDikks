@@ -225,6 +225,8 @@ class ModelPreprocessor:
         return prepared
 
     def _flag(self, name: str) -> bool:
+        if self.feature_flags is None:
+            return False
         return bool(self.feature_flags.get(name, False))
 
     def add_features(self, df: pd.DataFrame) -> pd.DataFrame:
