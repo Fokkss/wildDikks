@@ -34,6 +34,11 @@ python -m new_model.cut_outliers \
   --train_path data/train_dataset.csv \
   --output_path data/train_dataset_clean.csv \
   --mode clip
+  
+python -m new_model.cut_outliers `
+  --train_path data/train_dataset.csv `
+  --output_path data/train_dataset_clean.csv `
+  --mode clip
 ```
 
 ## Tune with Optuna
@@ -45,6 +50,12 @@ python -m new_model.tune_transformer_optuna \
   --train_path data/train_dataset_clean.csv \
   --output_dir artifacts/transformer_optuna \
   --n_trials 5 \
+  --outlier_mode none
+  
+python -m new_model.tune_transformer_optuna `
+  --train_path data/train_dataset_clean.csv `
+  --output_dir artifacts/transformer_optuna `
+  --n_trials 5 `
   --outlier_mode none
 ```
 
@@ -85,6 +96,12 @@ python -m new_model.train_transformer_ensemble \
   --model_path artifacts/transformer_ensemble.pkl \
   --n_models 3 \
   --outlier_mode clip
+  
+python -m new_model.train_transformer_ensemble `
+  --train_path data/train_dataset.csv `
+  --model_path artifacts/transformer_ensemble.pkl `
+  --n_models 3 `
+  --outlier_mode clip
 ```
 
 ## Predict
@@ -96,6 +113,11 @@ python -m new_model.predict_transformer_ensemble \
   --features_path data/valid_features.csv \
   --model_path artifacts/transformer_ensemble.pkl \
   --output_path submission.csv
+  
+python -m new_model.predict_transformer_ensemble `
+  --features_path data/valid_features.csv `
+  --model_path artifacts/transformer_ensemble.pkl `
+  --output_path submission.csv
 ```
 
 With header:
@@ -105,6 +127,12 @@ python -m new_model.predict_transformer_ensemble \
   --features_path data/valid_features.csv \
   --model_path artifacts/transformer_ensemble.pkl \
   --output_path submission.csv \
+  --header
+  
+python -m new_model.predict_transformer_ensemble `
+  --features_path data/valid_features.csv `
+  --model_path artifacts/transformer_ensemble.pkl `
+  --output_path submission.csv `
   --header
 ```
 
