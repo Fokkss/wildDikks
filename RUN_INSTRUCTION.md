@@ -6,8 +6,8 @@ pip install -r requirements.txt
 
 ### ***Training | Gymnastics | LightWeightBaby***
 ```commandline
-python train.py ^
-  --train_path dataset/train_dataset.csv ^
+python -m new_model.train ^
+  --train_path data/train_dataset.csv ^
   --model_dir artifacts ^
   --seed 42 ^
   --valid_size 0.2 ^
@@ -17,14 +17,14 @@ python train.py ^
 
 ### Prediction
 ```commandline
-python predict.py ^
-  --features_path dataset/valid_features.csv ^
+python -m new_model.predict ^
+  --features_path data/valid_features.csv ^
   --model_path artifacts/ensemble.pkl ^
   --output_path submission.csv
 ```
 
 ### May be done easier
 ```commandline
-python train.py --train_path dataset/train_dataset.csv --model_dir artifacts
-python predict.py --features_path dataset/valid_features.csv --model_path artifacts/ensemble.pkl --output_path submission.csv
+python -m new_model.train --train_path data/train_dataset.csv --model_dir artifacts
+python -m new_model.predict --features_path data/valid_features.csv --model_path artifacts/ensemble.pkl --output_path submission.csv
 ```

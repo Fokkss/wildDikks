@@ -1,3 +1,10 @@
+"""
+python -m new_model.predict \
+  --features_path data/valid_features.csv \
+  --model_path artifacts/ensemble.pkl \
+  --output_path submission.csv
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -5,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import (
+from new_model.config import (
     read_csv,
     normalize_columns,
     clip_predictions_to_available_capacity,
@@ -62,7 +69,6 @@ def main() -> None:
     pd.DataFrame(predictions).to_csv(
         output_path,
         index=False,
-        header=False,
     )
 
     print(f"Saved {len(predictions)} predictions to: {output_path}")

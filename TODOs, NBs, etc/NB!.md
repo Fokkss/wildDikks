@@ -24,3 +24,4 @@ kept out for now and will be added later in a controlled way.
 
 PD_:NOTE: predict.py, train.py, config.py all in right place (project root)
 
+SX_:NOTE: not in right place. no logic in such placement

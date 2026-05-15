@@ -12,6 +12,8 @@ COPY tests/ ./tests/
 
 COPY for_plot/ ./for_plot/
 
+COPY models/ ./models/
+
 COPY new_model/ ./new_model/
 
 COPY pytest.ini .

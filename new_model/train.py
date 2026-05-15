@@ -1,3 +1,13 @@
+"""
+python -m new_model.train \
+      --train_path data/train_dataset.csv \
+      --model_dir artifacts \
+      --seed 42 \
+      --valid_size 0.2 \
+      --catboost_weight 0.5 \
+      --xgboost_weight 0.5
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -7,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from config import (
+from new_model.config import (
     TARGET_COL,
     FARM_CAPACITY_MW,
     read_csv,

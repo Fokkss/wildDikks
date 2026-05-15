@@ -62,3 +62,7 @@
 
 Причина: если train отсортирован по времени, а valid_features.csv идёт в обратном порядке,
 lag1 начинает означать не прошлый час, а следующий час.
+
+## FOLLOW RIGHT PROJECT STRUCTURE
+
+- RUN_INSTRUCTION.md should be duplicated to main README
