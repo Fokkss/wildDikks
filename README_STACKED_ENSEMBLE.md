@@ -45,6 +45,11 @@ python -m new_model.cut_outliers \
   --train_path data/train_dataset.csv \
   --output_path data/train_dataset_clean.csv \
   --mode clip
+  
+python -m new_model.cut_outliers `
+  --train_path data/train_dataset.csv `
+  --output_path data/train_dataset_clean.csv `
+  --mode clip
 ```
 
 ### 3. Tune stacked ensemble
@@ -57,6 +62,14 @@ python -m new_model.tune_stacked_ensemble_optuna \
   --max_models 5 \
   --n_splits 3 \
   --outlier_mode none
+  
+python -m new_model.tune_stacked_ensemble_optuna `
+  --train_path data/train_dataset_clean.csv `
+  --output_dir artifacts/stacked_optuna `
+  --n_trials 20 `
+  --max_models 5 `
+  --n_splits 3 `
+  --outlier_mode none
 ```
 
 Use `--outlier_mode none` here if you already cleaned the dataset in step 2.
@@ -68,6 +81,12 @@ python -m new_model.train_stacked_ensemble \
   --train_path data/train_dataset_clean.csv \
   --model_path artifacts/stacked_ensemble.pkl \
   --config_path artifacts/stacked_optuna/best_stacked_config.json \
+  --outlier_mode none
+  
+python -m new_model.train_stacked_ensemble `
+  --train_path data/train_dataset_clean.csv `
+  --model_path artifacts/stacked_ensemble.pkl `
+  --config_path artifacts/stacked_optuna/best_stacked_config.json `
   --outlier_mode none
 ```
 
@@ -90,6 +109,11 @@ No header:
 python -m new_model.predict_stacked_ensemble \
   --features_path data/valid_features.csv \
   --model_path artifacts/stacked_ensemble.pkl \
+  --output_path submission.csv
+  
+python -m new_model.predict_stacked_ensemble `
+  --features_path data/valid_features.csv `
+  --model_path artifacts/stacked_ensemble.pkl `
   --output_path submission.csv
 ```
 
