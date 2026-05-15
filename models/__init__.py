@@ -1,20 +1,14 @@
-from .base import (
-    TARGET_COL,
-    DATETIME_COL,
-    INSTALLED_CAPACITY_MW,
-    ModelPreprocessor,
-)
-
+from .base import BaseWindModel, ModelPreprocessor
 from .catboost_model import CatBoostWindModel
-from .xgboost_model import XGBoostWindModel
 from .ensemble import WeightedEnsembleModel
+from .xgboost_model import XGBoostWindModel
+from .stacking_ensemble import TimeSeriesStackingEnsemble
 
 __all__ = [
-    "TARGET_COL",
-    "DATETIME_COL",
-    "INSTALLED_CAPACITY_MW",
+    "BaseWindModel",
     "ModelPreprocessor",
     "CatBoostWindModel",
-    "XGBoostWindModel",
     "WeightedEnsembleModel",
+    "XGBoostWindModel",
+    "TimeSeriesStackingEnsemble",
 ]
