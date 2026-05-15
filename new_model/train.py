@@ -29,6 +29,10 @@ from new_model.config import (
 
 from models import WeightedEnsembleModel
 
+from models.base import ModelPreprocessor
+from models.catboost_model import CatBoostWindModel
+from models.xgboost_model import XGBoostWindModel
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train CatBoost + XGBoost ensemble.")
@@ -71,6 +75,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.5,
         help="Weight of XGBoost predictions in ensemble.",
+    )
+
+    parser.add_argument(
+        "--feature_flags_path",
+        default=None,
+        help="Optional path to Optuna best_feature_flags.json",
     )
 
     return parser.parse_args()
@@ -117,6 +127,45 @@ def save_feature_importance(
         print(f"[WARN] Could not save feature importance: {exc}")
 
 
+def load_feature_flags(path: str | None) -> dict[str, bool] | None:
+    if path is None:
+        return None
+
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def build_ensemble(
+    catboost_weight: float,
+    xgboost_weight: float,
+    seed: int,
+    feature_flags: dict[str, bool] | None,
+) -> WeightedEnsembleModel:
+    cat_preprocessor = ModelPreprocessor(
+        feature_flags=feature_flags.copy() if feature_flags else None
+    )
+    xgb_preprocessor = ModelPreprocessor(
+        feature_flags=feature_flags.copy() if feature_flags else None
+    )
+
+    cat_model = CatBoostWindModel(
+        preprocessor=cat_preprocessor,
+        random_seed=seed,
+    )
+
+    xgb_model = XGBoostWindModel(
+        preprocessor=xgb_preprocessor,
+        random_seed=seed,
+    )
+
+    return WeightedEnsembleModel(
+        catboost_model=cat_model,
+        xgboost_model=xgb_model,
+        catboost_weight=catboost_weight,
+        xgboost_weight=xgboost_weight,
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -149,9 +198,14 @@ def main() -> None:
     print(f"Local valid rows: {len(valid_part)}")
 
     print("[4/6] Training temporary validation model...")
-    validation_model = WeightedEnsembleModel(
+    feature_flags = load_feature_flags(args.feature_flags_path)
+    print(f"Feature flags: {feature_flags}")
+
+    validation_model = build_ensemble(
         catboost_weight=args.catboost_weight,
         xgboost_weight=args.xgboost_weight,
+        seed=args.seed,
+        feature_flags=feature_flags,
     )
 
     validation_model.fit(
@@ -178,9 +232,11 @@ def main() -> None:
     ).to_csv(model_dir / "local_validation_predictions.csv", index=False)
 
     print("[5/6] Training final model on ALL available train data...")
-    final_model = WeightedEnsembleModel(
+    final_model = build_ensemble(
         catboost_weight=args.catboost_weight,
         xgboost_weight=args.xgboost_weight,
+        seed=args.seed,
+        feature_flags=feature_flags,
     )
 
     final_model.fit(train_df=df)

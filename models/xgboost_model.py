@@ -39,16 +39,16 @@ class XGBoostWindModel(BaseWindModel):
         return {
             "objective": "reg:absoluteerror",
             "n_estimators": 1200,
-            "learning_rate": 0.03,
+            "learning_rate": 0.01,
             "max_depth": 5,
-            "min_child_weight": 3,
-            "subsample": 0.9,
-            "colsample_bytree": 0.9,
-            "reg_alpha": 0.0,
-            "reg_lambda": 2.0,
+            "min_child_weight": 8,
+            "subsample": 0.85,
+            "colsample_bytree": 0.7,
+            "reg_alpha": 0.05,
+            "reg_lambda": 4.7,
             "random_state": self.random_seed,
             "tree_method": "hist",
-            "n_jobs": -1,
+            "n_jobs": 4,
         }
 
     def fit(

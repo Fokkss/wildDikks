@@ -26,6 +26,7 @@ wcwidth==0.7.0
 scikit-learn>=1.3
 xgboost>=2.0,<3.0
 catboost==1.2.10
+optuna>=3.6
 
 
 pyreadline3; sys_platform == 'win32'
