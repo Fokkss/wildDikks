@@ -102,7 +102,7 @@ python -m new_model.tune_stacking_optuna `
   --outlier_mode none
 ```
 
-If LightGBM is installed and you want to allow it as meta-model:
+If LightGBM is installed and you want to allow it as meta-model (smth bad happening tho do not use):
 
 ```bash
 python -m new_model.tune_stacking_optuna \
