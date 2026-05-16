@@ -29,7 +29,7 @@ from new_model.config import (
 
 from models import WeightedEnsembleModel
 
-from models.base import ModelPreprocessor
+from models.base import ModelPreprocessor, DEFAULT_FEATURE_FLAGS
 from models.catboost_model import CatBoostWindModel
 from models.xgboost_model import XGBoostWindModel
 
@@ -141,29 +141,26 @@ def build_ensemble(
     seed: int,
     feature_flags: dict[str, bool] | None,
 ) -> WeightedEnsembleModel:
+    flags = feature_flags.copy() if feature_flags is not None else DEFAULT_FEATURE_FLAGS.copy()
+
     cat_preprocessor = ModelPreprocessor(
-        feature_flags=feature_flags.copy() if feature_flags else None
-    )
+        feature_flags=flags.copy())
     xgb_preprocessor = ModelPreprocessor(
-        feature_flags=feature_flags.copy() if feature_flags else None
-    )
+        feature_flags=flags.copy())
 
     cat_model = CatBoostWindModel(
         preprocessor=cat_preprocessor,
-        random_seed=seed,
-    )
+        random_seed=seed,)
 
     xgb_model = XGBoostWindModel(
         preprocessor=xgb_preprocessor,
-        random_seed=seed,
-    )
+        random_seed=seed,)
 
     return WeightedEnsembleModel(
         catboost_model=cat_model,
         xgboost_model=xgb_model,
         catboost_weight=catboost_weight,
-        xgboost_weight=xgboost_weight,
-    )
+        xgboost_weight=xgboost_weight,)
 
 
 def main() -> None:
@@ -215,7 +212,8 @@ def main() -> None:
 
     y_valid = pd.to_numeric(valid_part[TARGET_COL], errors="coerce")
     valid_pred = validation_model.predict(valid_part)
-    valid_pred = clip_predictions_to_available_capacity(valid_pred, valid_part)
+    # valid_pred = clip_predictions_to_available_capacity(valid_pred, valid_part)
+    valid_pred = np.clip(valid_pred, 0.0, FARM_CAPACITY_MW)
 
     valid_error_percent = competition_error_percent(y_valid, valid_pred)
     valid_mae_mw = float(np.mean(np.abs(y_valid.to_numpy() - valid_pred)))
@@ -223,13 +221,34 @@ def main() -> None:
     print(f"[LOCAL VALID] MAE: {valid_mae_mw:.4f} MW")
     print(f"[LOCAL VALID] Competition error: {valid_error_percent:.4f}%")
 
-    pd.DataFrame(
+    local_validation_predictions = pd.DataFrame(
         {
             "actual": y_valid,
             "prediction": valid_pred,
             "abs_error": np.abs(y_valid.to_numpy() - valid_pred),
         }
-    ).to_csv(model_dir / "local_validation_predictions.csv", index=False)
+    )
+
+    local_validation_predictions.to_csv(
+        model_dir / "local_validation_predictions.csv",
+        index=False,
+    )
+
+    # Расширенный debug-файл:
+    # сохраняем не только actual/prediction/error, но и все исходные признаки valid_part.
+    # Так можно смотреть, при каких температурах, ветре, осадках и направлениях модель ошибается.
+    # analysis:
+    # python -c "import pandas as pd; df=pd.read_csv('artifacts/local_validation_debug.csv'); print(df.groupby(pd.cut(df['temperature_80m'], [-50,-10,-5,0,2,5,10,20,50]))['abs_error'].mean())"
+    valid_debug = valid_part.copy()
+    valid_debug["actual"] = y_valid.to_numpy()
+    valid_debug["prediction"] = valid_pred
+    valid_debug["residual"] = valid_debug["prediction"] - valid_debug["actual"]
+    valid_debug["abs_error"] = np.abs(valid_debug["residual"])
+
+    valid_debug.to_csv(
+        model_dir / "local_validation_debug.csv",
+        index=False,
+    )
 
     print("[5/6] Training final model on ALL available train data...")
     final_model = build_ensemble(
@@ -249,7 +268,8 @@ def main() -> None:
     print("[6/6] Saving metrics and feature importances...")
     train_y = pd.to_numeric(df[TARGET_COL], errors="coerce")
     train_pred = final_model.predict(df)
-    train_pred = clip_predictions_to_available_capacity(train_pred, df)
+    # train_pred = clip_predictions_to_available_capacity(train_pred, df)
+    train_pred = np.clip(train_pred, 0.0, FARM_CAPACITY_MW)
 
     train_error_percent = competition_error_percent(train_y, train_pred)
     train_mae_mw = float(np.mean(np.abs(train_y.to_numpy() - train_pred)))

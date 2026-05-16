@@ -27,6 +27,11 @@ BETZ_LIMIT_CP = 16.0 / 27.0   # ≈ 0.593, theoretical max efficiency
 ROTOR_DIAMETER_M = 132.0
 ROTOR_SWEPT_AREA_M2 = np.pi * (ROTOR_DIAMETER_M / 2.0) ** 2
 
+LAG_HOURS = (1, 2, 3, 6, 12, 24, 48, 72, 168)
+DIFF_HOURS = (1, 3, 24)
+ROLLING_MEAN_HOURS = (3, 6, 12, 24, 72)
+ROLLING_STD_HOURS = (6, 24, 72)
+
 
 # Названия, которые приводим к нормальному виду.
 # Главная цель — не таскать по проекту битую кодировку.
@@ -46,6 +51,13 @@ DEFAULT_FEATURE_FLAGS = {
     "density_adjusted_power": True,
     "wind_direction": True,
     "betz_limit": True,
+    "lags": True,
+    "multi_height_power": True,
+    "gust_features": True,
+
+    "wind_shear": True,
+    "wind_regime": True,
+    "icing": True,
 }
 
 
@@ -159,6 +171,33 @@ def _find_wind_direction_col(df: pd.DataFrame, height_m: int) -> str | None:
     return sorted(candidates, key=lambda x: -x[0])[0][1]
 
 
+def _find_wind_gust_col(df: pd.DataFrame, height_m: int = 10) -> str | None:
+    height = str(height_m)
+
+    candidates: list[tuple[int, str]] = []
+
+    for col in df.columns:
+        n = _norm_col(col)
+
+        has_gust = (
+            "gust" in n
+            or "gusts" in n
+            or "порыв" in n
+        )
+        has_height = height in n
+
+        if has_gust and has_height:
+            score = 0
+            if f"{height}m" in n or f"{height}_m" in n:
+                score += 2
+            candidates.append((score, col))
+
+    if not candidates:
+        return None
+
+    return sorted(candidates, key=lambda x: -x[0])[0][1]
+
+
 def _find_temperature_col(df: pd.DataFrame) -> str | None:
     return (
         _find_col_by_tokens(df, required_tokens=("temp",), optional_tokens=("80",))
@@ -174,6 +213,139 @@ def _find_pressure_col(df: pd.DataFrame) -> str | None:
         or _find_col_by_tokens(df, required_tokens=("давление",))
         or _find_col_by_tokens(df, required_tokens=("msl",))
     )
+
+def _numeric_series(
+    df: pd.DataFrame,
+    col: str | None,
+    default: float = 0.0,
+) -> pd.Series:
+    """
+    Safely returns numeric column as Series.
+    If column is missing, returns constant Series with dataframe index.
+    """
+
+    if col is None or col not in df.columns:
+        return pd.Series(default, index=df.index, dtype="float64")
+
+    return pd.to_numeric(df[col], errors="coerce")
+
+
+def _safe_ratio(
+    numerator: pd.Series,
+    denominator: pd.Series,
+    eps: float = 1e-6,
+) -> pd.Series:
+    return numerator / (denominator + eps)
+
+
+def _angle_diff_deg(
+    a_deg: pd.Series,
+    b_deg: pd.Series,
+) -> pd.Series:
+    """
+    Smallest signed difference between two directions in degrees.
+    Result is in [-180, 180].
+
+    Example:
+        a=350, b=10 -> -20
+        a=10, b=350 -> 20
+    """
+
+    return ((a_deg - b_deg + 180.0) % 360.0) - 180.0
+
+
+def _add_time_lag_features(
+    df: pd.DataFrame,
+    value_col: str,
+    prefix: str,
+    datetime_col: str,
+    lag_hours: tuple[int, ...] = LAG_HOURS,
+    diff_hours: tuple[int, ...] = DIFF_HOURS,
+    rolling_mean_hours: tuple[int, ...] = ROLLING_MEAN_HOURS,
+    rolling_std_hours: tuple[int, ...] = ROLLING_STD_HOURS,
+) -> pd.DataFrame:
+    """
+    Добавляет time-aware лаги, diff и rolling-фичи.
+
+    Важно:
+    - считаем по datetime, а не по порядку строк;
+    - не используем target;
+    - rolling считается только по прошлым значениям, без текущего часа.
+
+    Примеры новых колонок:
+        ws80_lag_1h
+        ws80_diff_3h
+        ws80_roll_mean_24h
+        ws80_roll_std_72h
+    """
+
+    if datetime_col not in df.columns or value_col not in df.columns:
+        return df
+
+    out = df.copy()
+
+    dt = pd.to_datetime(out[datetime_col], errors="coerce")
+    value = pd.to_numeric(out[value_col], errors="coerce")
+
+    value_by_datetime = (
+        pd.DataFrame(
+            {
+                "__datetime": dt,
+                "__value": value,
+            }
+        )
+        .dropna(subset=["__datetime"])
+        .drop_duplicates("__datetime", keep="last")
+        .set_index("__datetime")["__value"]
+        .sort_index()
+    )
+
+    if value_by_datetime.empty:
+        return out
+
+    # -------------------------
+    # Lag features
+    # -------------------------
+    for lag_h in lag_hours:
+        lagged_datetime = dt - pd.Timedelta(hours=lag_h)
+        out[f"{prefix}_lag_{lag_h}h"] = lagged_datetime.map(value_by_datetime)
+
+    # -------------------------
+    # Diff features
+    # current - lag
+    # -------------------------
+    for diff_h in diff_hours:
+        lag_col = f"{prefix}_lag_{diff_h}h"
+
+        if lag_col not in out.columns:
+            lagged_datetime = dt - pd.Timedelta(hours=diff_h)
+            out[lag_col] = lagged_datetime.map(value_by_datetime)
+
+        out[f"{prefix}_diff_{diff_h}h"] = value - out[lag_col]
+
+    # -------------------------
+    # Rolling features
+    # Только прошлые значения: shift(1)
+    # -------------------------
+    shifted = value_by_datetime.shift(1)
+
+    for window_h in rolling_mean_hours:
+        roll_mean = shifted.rolling(
+            f"{window_h}h",
+            min_periods=1,
+        ).mean()
+
+        out[f"{prefix}_roll_mean_{window_h}h"] = dt.map(roll_mean)
+
+    for window_h in rolling_std_hours:
+        roll_std = shifted.rolling(
+            f"{window_h}h",
+            min_periods=2,
+        ).std()
+
+        out[f"{prefix}_roll_std_{window_h}h"] = dt.map(roll_std)
+
+    return out
 
 
 @dataclass
@@ -348,7 +520,11 @@ class ModelPreprocessor:
         # ------------------------------------------------------------
         # 3. Hub-height wind speed
         # ------------------------------------------------------------
+        ws10_col = _find_wind_speed_col(df, 10)
         ws80_col = _find_wind_speed_col(df, 80)
+        ws120_col = _find_wind_speed_col(df, 120)
+        ws180_col = _find_wind_speed_col(df, 180)
+        gust10_col = _find_wind_gust_col(df, 10)
 
         if ws80_col is not None:
             ws80 = pd.to_numeric(df[ws80_col], errors="coerce")
@@ -371,6 +547,104 @@ class ModelPreprocessor:
                             df["power_curve_proxy"] * INSTALLED_CAPACITY_MW
                     )
 
+        # ------------------------------------------------------------
+        # 3.1 Multi-height wind physics: 120m / 180m
+        # ------------------------------------------------------------
+
+        if self._flag("multi_height_power"):
+            for height, col in ((120, ws120_col), (180, ws180_col)):
+                if col is None:
+                    continue
+
+                ws_h = pd.to_numeric(df[col], errors="coerce")
+                prefix = f"ws{height}"
+
+                df[f"{prefix}_sq"] = ws_h ** 2
+                df[f"{prefix}_cube"] = ws_h ** 3
+
+                power_curve_h = ((ws_h.clip(3.0, 12.0) - 3.0) / 9.0) ** 3
+                df[f"power_curve_proxy_{height}m"] = power_curve_h.clip(0.0, 1.0)
+
+                if "available_capacity_mw" in df.columns:
+                    df[f"expected_power_proxy_{height}m"] = (
+                            df[f"power_curve_proxy_{height}m"]
+                            * df["available_capacity_mw"]
+                    )
+                else:
+                    df[f"expected_power_proxy_{height}m"] = (
+                            df[f"power_curve_proxy_{height}m"]
+                            * INSTALLED_CAPACITY_MW
+                    )
+        # ------------------------------------------------------------
+        # 3.2 Wind shear features
+        # ------------------------------------------------------------
+        if self._flag("wind_shear"):
+            ws10 = _numeric_series(df, ws10_col, default=np.nan)
+            ws80 = _numeric_series(df, ws80_col, default=np.nan)
+            ws120 = _numeric_series(df, ws120_col, default=np.nan)
+            ws180 = _numeric_series(df, ws180_col, default=np.nan)
+
+            df["wind_shear_80_10"] = ws80 - ws10
+            df["wind_shear_120_80"] = ws120 - ws80
+            df["wind_shear_180_80"] = ws180 - ws80
+            df["wind_shear_180_120"] = ws180 - ws120
+
+            df["wind_shear_ratio_80_10"] = _safe_ratio(ws80, ws10)
+            df["wind_shear_ratio_120_80"] = _safe_ratio(ws120, ws80)
+            df["wind_shear_ratio_180_80"] = _safe_ratio(ws180, ws80)
+            df["wind_shear_ratio_180_120"] = _safe_ratio(ws180, ws120)
+
+            valid_80_120 = (ws80 > 0.5) & (ws120 > 0.5)
+            alpha_120_80 = pd.Series(np.nan, index=df.index)
+            alpha_120_80.loc[valid_80_120] = (
+                np.log(ws120.loc[valid_80_120] / ws80.loc[valid_80_120])
+                / np.log(120.0 / 80.0)
+            )
+
+            valid_80_180 = (ws80 > 0.5) & (ws180 > 0.5)
+            alpha_180_80 = pd.Series(np.nan, index=df.index)
+            alpha_180_80.loc[valid_80_180] = (
+                np.log(ws180.loc[valid_80_180] / ws80.loc[valid_80_180])
+                / np.log(180.0 / 80.0)
+            )
+
+            df["wind_shear_alpha_120_80"] = alpha_120_80
+            df["wind_shear_alpha_180_80"] = alpha_180_80
+
+        # ------------------------------------------------------------
+        # 3.3 Wind regime features: cut-in / ramp / rated / storm
+        # ------------------------------------------------------------
+        if self._flag("wind_regime"):
+            ws80 = _numeric_series(df, ws80_col, default=np.nan)
+            ws120 = _numeric_series(df, ws120_col, default=np.nan)
+            ws180 = _numeric_series(df, ws180_col, default=np.nan)
+            gust10 = _numeric_series(df, gust10_col, default=np.nan)
+
+            # Approximate turbine zones.
+            # Cut-in около 3 м/с, rated около 12 м/с, cut-out/storm около 25 м/с.
+            df["is_below_cut_in_80m"] = (ws80 < 3.0).astype(float)
+            df["is_ramp_zone_80m"] = ((ws80 >= 3.0) & (ws80 < 12.0)).astype(float)
+            df["is_rated_zone_80m"] = ((ws80 >= 12.0) & (ws80 < 25.0)).astype(float)
+            df["is_storm_zone_80m"] = (ws80 >= 25.0).astype(float)
+
+            df["is_below_cut_in_120m"] = (ws120 < 3.0).astype(float)
+            df["is_ramp_zone_120m"] = ((ws120 >= 3.0) & (ws120 < 12.0)).astype(float)
+            df["is_rated_zone_120m"] = ((ws120 >= 12.0) & (ws120 < 25.0)).astype(float)
+            df["is_storm_zone_120m"] = (ws120 >= 25.0).astype(float)
+
+            df["is_high_wind_180m"] = (ws180 >= 15.0).astype(float)
+            df["is_extreme_wind_180m"] = (ws180 >= 22.0).astype(float)
+
+            # Gust-driven stress.
+            df["is_extreme_gust10"] = (gust10 >= 18.0).astype(float)
+            df["gust10_to_ws80_ratio_regime"] = _safe_ratio(gust10, ws80)
+            df["gust10_excess_over_ws80_regime"] = (gust10 - ws80).clip(lower=0.0)
+
+            # Interaction: high gusts during already strong upper wind.
+            df["storm_risk_proxy"] = (
+                df["is_extreme_gust10"]
+                * ((ws120 >= 12.0) | (ws180 >= 15.0)).astype(float)
+            )
         # ------------------------------------------------------------
         # 4. Air density
         # ------------------------------------------------------------
@@ -397,6 +671,69 @@ class ModelPreprocessor:
             df["air_density"] = pressure_pa / (R_DRY_AIR * temp_k)
 
         # ------------------------------------------------------------
+        # 4.1 Icing / cold wet weather features
+        # ------------------------------------------------------------
+        if self._flag("icing"):
+            temp80 = _numeric_series(df, temp_col, default=np.nan)
+
+            if "temperature_120m" in df.columns:
+                temp120 = pd.to_numeric(df["temperature_120m"], errors="coerce")
+            else:
+                temp120 = pd.Series(np.nan, index=df.index)
+
+            rain = _numeric_series(df, "rain", default=0.0).fillna(0.0)
+            showers = _numeric_series(df, "showers", default=0.0).fillna(0.0)
+            snowfall = _numeric_series(df, "snowfall", default=0.0).fillna(0.0)
+            cloud_low = _numeric_series(df, "cloud_cover_low", default=0.0).fillna(0.0)
+
+            precip_total = rain + showers + snowfall
+
+            df["precip_total"] = precip_total
+            df["has_precip"] = (precip_total > 0.0).astype(float)
+            df["has_snowfall"] = (snowfall > 0.0).astype(float)
+
+            # Температурные зоны риска.
+            df["is_freezing_temp_80m"] = (
+                (temp80 >= -6.0) & (temp80 <= 2.0)
+            ).astype(float)
+
+            df["is_near_zero_temp_80m"] = (
+                (temp80 >= -2.0) & (temp80 <= 2.0)
+            ).astype(float)
+
+            df["is_deep_cold_80m"] = (temp80 < -10.0).astype(float)
+
+            # Мокрый холод — один из самых подозрительных режимов.
+            df["is_wet_freezing_80m"] = (
+                (temp80 >= -4.0)
+                & (temp80 <= 2.0)
+                & (precip_total > 0.0)
+            ).astype(float)
+
+            # Снег при отрицательных температурах.
+            df["icing_risk_snow"] = (
+                (temp80 >= -8.0)
+                & (temp80 <= 1.0)
+                & (snowfall > 0.0)
+            ).astype(float)
+
+            # Низкая облачность + влажная/снежная погода + около нуля.
+            df["icing_risk_cloud_precip"] = (
+                df["is_freezing_temp_80m"]
+                * (precip_total > 0.0).astype(float)
+                * (cloud_low > 0.05).astype(float)
+            )
+
+            # Непрерывный индекс риска, не только 0/1.
+            df["icing_risk_score"] = (
+                df["is_freezing_temp_80m"]
+                * (1.0 + precip_total)
+                * (1.0 + cloud_low)
+            )
+
+            # Вертикальный температурный градиент.
+            df["temp_gradient_120_80"] = temp120 - temp80
+        # ------------------------------------------------------------
         # 5. Wind power density
         # ------------------------------------------------------------
         if (
@@ -405,6 +742,45 @@ class ModelPreprocessor:
                 and "ws80_cube" in df.columns
         ):
             df["wind_power_density"] = 0.5 * df["air_density"] * df["ws80_cube"]
+
+        # ------------------------------------------------------------
+        # 5.1 Multi-height wind power density
+        # ------------------------------------------------------------
+        if self._flag("multi_height_power") and "air_density" in df.columns:
+            for height in (120, 180):
+                cube_col = f"ws{height}_cube"
+
+                if cube_col in df.columns:
+                    df[f"wind_power_density_{height}m"] = (
+                        0.5 * df["air_density"] * df[cube_col]
+                    )
+
+        # ------------------------------------------------------------
+        # 5.2 Gust features
+        # ------------------------------------------------------------
+        gust10_col = _find_wind_gust_col(df, 10)
+
+        if self._flag("gust_features") and gust10_col is not None:
+            gust10 = pd.to_numeric(df[gust10_col], errors="coerce")
+
+            df["gust10_sq"] = gust10 ** 2
+            df["gust10_cube"] = gust10 ** 3
+
+            if ws80_col is not None:
+                ws80_for_gust = pd.to_numeric(df[ws80_col], errors="coerce")
+
+                df["gust10_to_ws80_ratio"] = gust10 / (ws80_for_gust + 1e-6)
+                df["gust10_minus_ws80"] = gust10 - ws80_for_gust
+                df["gust10_excess_over_ws80"] = (
+                    gust10 - ws80_for_gust
+                ).clip(lower=0.0)
+
+                df["gust10_x_ws80"] = gust10 * ws80_for_gust
+
+            if "air_density" in df.columns:
+                df["gust10_power_density"] = (
+                    0.5 * df["air_density"] * df["gust10_cube"]
+                )
 
         # ------------------------------------------------------------
         # 6. Density-adjusted expected power
@@ -421,54 +797,101 @@ class ModelPreprocessor:
             )
 
         # ------------------------------------------------------------
-        # 7. Wind direction features
+        # 7. Wind direction features: 80m / 120m / 180m + veer
         # ------------------------------------------------------------
-        wind_dir_80m_col = _find_wind_direction_col(df, 80)
+        if self._flag("wind_direction"):
+            wind_dir_deg_by_height: dict[int, pd.Series] = {}
 
-        if self._flag("wind_direction") and wind_dir_80m_col is not None:
-            """
-            :NOTE: provides theese new features
-            wind_dir_80m_sin
-            wind_dir_80m_cos
-            wind_sector_8
-            wind_sector_16
-            ws80_cube_x_dir_sin
-            ws80_cube_x_dir_cos
-            power_curve_x_sector_8
-            power_curve_x_sector_16
-            """
-            wind_dir_raw = pd.to_numeric(df[wind_dir_80m_col], errors="coerce")
+            for height in (80, 120, 180):
+                wind_dir_col = _find_wind_direction_col(df, height)
+                wind_speed_col = _find_wind_speed_col(df, height)
 
-            # ВАЖНО:
-            # В данных направление ветра хранится как degrees / 1000.
-            # Например:
-            #   0.273 -> 273 degrees
-            #   0.099 -> 99 degrees
-            wind_dir_80m_deg = (wind_dir_raw * 1000.0) % 360.0
-            wind_dir_80m_rad = np.deg2rad(wind_dir_80m_deg)
+                if wind_dir_col is None:
+                    continue
 
-            df["wind_dir_80m_sin"] = np.sin(wind_dir_80m_rad)
-            df["wind_dir_80m_cos"] = np.cos(wind_dir_80m_rad)
+                wind_dir_raw = pd.to_numeric(df[wind_dir_col], errors="coerce")
 
-            df["wind_sector_8"] = (wind_dir_80m_deg // 45.0).astype(float)
-            df["wind_sector_16"] = (wind_dir_80m_deg // 22.5).astype(float)
+                # В данных направление ветра хранится как degrees / 1000.
+                # Например:
+                #   0.273 -> 273 degrees
+                wind_dir_deg = (wind_dir_raw * 1000.0) % 360.0
+                wind_dir_rad = np.deg2rad(wind_dir_deg)
 
-            if "ws80_cube" in df.columns:
-                df["ws80_cube_x_dir_sin"] = (
-                        df["ws80_cube"] * df["wind_dir_80m_sin"]
+                wind_dir_deg_by_height[height] = wind_dir_deg
+
+                df[f"wind_dir_{height}m_sin"] = np.sin(wind_dir_rad)
+                df[f"wind_dir_{height}m_cos"] = np.cos(wind_dir_rad)
+
+                df[f"wind_sector_{height}m_8"] = (
+                    wind_dir_deg // 45.0
+                ).astype(float)
+
+                df[f"wind_sector_{height}m_16"] = (
+                    wind_dir_deg // 22.5
+                ).astype(float)
+
+                # Speed × direction components.
+                # Это не строго физическая u/v-конвенция, но для ML даёт направленный ветер.
+                if wind_speed_col is not None:
+                    ws_h = pd.to_numeric(df[wind_speed_col], errors="coerce")
+
+                    df[f"wind_u_{height}m"] = ws_h * df[f"wind_dir_{height}m_sin"]
+                    df[f"wind_v_{height}m"] = ws_h * df[f"wind_dir_{height}m_cos"]
+
+                    cube_col = f"ws{height}_cube"
+                    if height == 80:
+                        cube_col = "ws80_cube"
+
+                    if cube_col in df.columns:
+                        df[f"{cube_col}_x_dir_sin"] = (
+                            df[cube_col] * df[f"wind_dir_{height}m_sin"]
+                        )
+                        df[f"{cube_col}_x_dir_cos"] = (
+                            df[cube_col] * df[f"wind_dir_{height}m_cos"]
+                        )
+
+                # Power curve × sector.
+                if height == 80:
+                    power_curve_col = "power_curve_proxy"
+                else:
+                    power_curve_col = f"power_curve_proxy_{height}m"
+
+                if power_curve_col in df.columns:
+                    df[f"{power_curve_col}_x_sector_8"] = (
+                        df[power_curve_col] * df[f"wind_sector_{height}m_8"]
+                    )
+                    df[f"{power_curve_col}_x_sector_16"] = (
+                        df[power_curve_col] * df[f"wind_sector_{height}m_16"]
+                    )
+
+            # --------------------------------------------------------
+            # Wind veer: direction change with height
+            # --------------------------------------------------------
+            if 80 in wind_dir_deg_by_height and 120 in wind_dir_deg_by_height:
+                df["wind_veer_120_80"] = _angle_diff_deg(
+                    wind_dir_deg_by_height[120],
+                    wind_dir_deg_by_height[80],
                 )
-                df["ws80_cube_x_dir_cos"] = (
-                        df["ws80_cube"] * df["wind_dir_80m_cos"]
+
+            if 80 in wind_dir_deg_by_height and 180 in wind_dir_deg_by_height:
+                df["wind_veer_180_80"] = _angle_diff_deg(
+                    wind_dir_deg_by_height[180],
+                    wind_dir_deg_by_height[80],
                 )
 
-            if "power_curve_proxy" in df.columns:
-                df["power_curve_x_sector_8"] = (
-                        df["power_curve_proxy"] * df["wind_sector_8"]
-                )
-                df["power_curve_x_sector_16"] = (
-                        df["power_curve_proxy"] * df["wind_sector_16"]
+            if 120 in wind_dir_deg_by_height and 180 in wind_dir_deg_by_height:
+                df["wind_veer_180_120"] = _angle_diff_deg(
+                    wind_dir_deg_by_height[180],
+                    wind_dir_deg_by_height[120],
                 )
 
+            if "wind_veer_120_80" in df.columns:
+                df["abs_wind_veer_120_80"] = df["wind_veer_120_80"].abs()
+
+            if "wind_veer_180_80" in df.columns:
+                df["abs_wind_veer_180_80"] = df["wind_veer_180_80"].abs()
+
+        df = df.copy()
         # ------------------------------------------------------------
         # 8. Betz limit features
         # ------------------------------------------------------------
@@ -517,6 +940,76 @@ class ModelPreprocessor:
                 df["expected_to_betz_ratio"] = (
                         df["expected_power_proxy"]
                         / (df["betz_power_farm_clipped_mw"] + 1e-6)
+                )
+
+        df = df.copy()
+        # ------------------------------------------------------------
+        # 9. Lag / diff / rolling features (actually can't be used for 18.05)
+        # ------------------------------------------------------------
+        if self._flag("lags"):
+            """
+            lags for theese features added:
+            wind_speed_80m
+            wind_speed_120m
+            wind_gusts_10m
+            pressure_msl
+            temperature_80m
+            expected_power_proxy
+            expected_power_density_adj
+            wind_power_density
+            wind_dir_80m_sin
+            wind_dir_80m_cos
+            """
+            lag_sources: list[tuple[str, str]] = []
+
+            # Raw weather features
+            ws80_col = _find_wind_speed_col(df, 80)
+            ws120_col = _find_wind_speed_col(df, 120)
+            gust10_col = _find_wind_gust_col(df, 10)
+
+            if ws80_col is not None:
+                lag_sources.append(("ws80", ws80_col))
+
+            if ws120_col is not None:
+                lag_sources.append(("ws120", ws120_col))
+
+            if gust10_col is not None:
+                lag_sources.append(("gust10", gust10_col))
+
+            if pressure_col is not None:
+                lag_sources.append(("pressure", pressure_col))
+
+            if temp_col is not None:
+                lag_sources.append(("temp80", temp_col))
+
+            # Engineered physical features
+            engineered_lag_columns = [
+                "expected_power_proxy",
+                "expected_power_density_adj",
+                "wind_power_density",
+                "wind_dir_80m_sin",
+                "wind_dir_80m_cos",
+            ]
+
+            for col in engineered_lag_columns:
+                if col in df.columns:
+                    lag_sources.append((col, col))
+
+            # Deduplicate in case fuzzy search found same column twice
+            seen_prefixes: set[str] = set()
+            unique_lag_sources: list[tuple[str, str]] = []
+
+            for prefix, col in lag_sources:
+                if prefix not in seen_prefixes:
+                    unique_lag_sources.append((prefix, col))
+                    seen_prefixes.add(prefix)
+
+            for prefix, col in unique_lag_sources:
+                df = _add_time_lag_features(
+                    df=df,
+                    value_col=col,
+                    prefix=prefix,
+                    datetime_col=self.datetime_col,
                 )
 
         return df.replace([np.inf, -np.inf], np.nan)

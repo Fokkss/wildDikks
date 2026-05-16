@@ -59,13 +59,12 @@ def main() -> None:
 
     print("[4/4] Predicting...")
     predictions = model.predict(features)
-    predictions = clip_predictions_to_available_capacity(predictions, features)
+    # predictions = clip_predictions_to_available_capacity(predictions, features)
+    predictions = predictions.clip(0.0, 90.09)
 
     output_path = Path(args.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # ВАЖНО:
-    # Формат платформы: один столбец, без индекса, без заголовка.
     pd.DataFrame(predictions).to_csv(
         output_path,
         index=False,
