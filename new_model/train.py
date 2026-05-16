@@ -83,6 +83,18 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to Optuna best_feature_flags.json",
     )
 
+    parser.add_argument(
+        "--valid_start",
+        default=None,
+        help="Optional validation start datetime, e.g. 2025-01-01",
+    )
+
+    parser.add_argument(
+        "--valid_end",
+        default=None,
+        help="Optional validation end datetime, e.g. 2025-04-01",
+    )
+
     return parser.parse_args()
 
 
@@ -186,10 +198,17 @@ def main() -> None:
     print(f"Target: {TARGET_COL}")
     print(f"Farm capacity MW: {FARM_CAPACITY_MW}")
 
-    train_part, valid_part = split_chronological(
-        df=df,
-        valid_size=args.valid_size,
-    )
+    if args.valid_start is not None and args.valid_end is not None:
+        train_part, valid_part = split_by_datetime_range(
+            df=df,
+            valid_start=args.valid_start,
+            valid_end=args.valid_end,
+        )
+    else:
+        train_part, valid_part = split_chronological(
+            df=df,
+            valid_size=args.valid_size,
+        )
 
     print(f"Train rows: {len(train_part)}")
     print(f"Local valid rows: {len(valid_part)}")

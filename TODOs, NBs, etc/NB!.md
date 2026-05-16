@@ -3,6 +3,10 @@
 
 
 
+
+PD_:NOTE: Обычно добавление фич идет так, что в общий скоуп 
+
+
 PD_:NOTE:
 
 Current implementation:

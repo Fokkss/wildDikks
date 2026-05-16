@@ -58,6 +58,12 @@ DEFAULT_FEATURE_FLAGS = {
     "wind_shear": True,
     "wind_regime": True,
     "icing": True,
+
+    "ramp_zone_features": True,
+    "precipitation_stress": True,
+    "time_interactions": True,
+
+    "rotor_equivalent_wind": True,
 }
 
 
@@ -214,6 +220,7 @@ def _find_pressure_col(df: pd.DataFrame) -> str | None:
         or _find_col_by_tokens(df, required_tokens=("msl",))
     )
 
+
 def _numeric_series(
     df: pd.DataFrame,
     col: str | None,
@@ -348,6 +355,63 @@ def _add_time_lag_features(
     return out
 
 
+def _add_past_window_sum_features(
+    df: pd.DataFrame,
+    value_col: str,
+    prefix: str,
+    datetime_col: str,
+    windows_hours: tuple[int, ...] = (3, 6, 12, 24),
+) -> pd.DataFrame:
+    """
+    Rolling sum over previous hours only.
+
+    Examples:
+        rain_sum_prev_6h
+        showers_sum_prev_12h
+        snowfall_sum_prev_24h
+
+    Важно:
+    shift(1) означает, что текущий час не включаем,
+    смотрим только на прошлые часы.
+    """
+
+    if datetime_col not in df.columns or value_col not in df.columns:
+        return df
+
+    out = df.copy()
+
+    dt = pd.to_datetime(out[datetime_col], errors="coerce")
+    value = pd.to_numeric(out[value_col], errors="coerce").fillna(0.0)
+
+    value_by_datetime = (
+        pd.DataFrame(
+            {
+                "__datetime": dt,
+                "__value": value,
+            }
+        )
+        .dropna(subset=["__datetime"])
+        .drop_duplicates("__datetime", keep="last")
+        .set_index("__datetime")["__value"]
+        .sort_index()
+    )
+
+    if value_by_datetime.empty:
+        return out
+
+    shifted = value_by_datetime.shift(1)
+
+    for window_h in windows_hours:
+        rolling_sum = shifted.rolling(
+            f"{window_h}h",
+            min_periods=1,
+        ).sum()
+
+        out[f"{prefix}_sum_prev_{window_h}h"] = dt.map(rolling_sum)
+
+    return out
+
+
 @dataclass
 class ModelPreprocessor:
     """
@@ -471,8 +535,6 @@ class ModelPreprocessor:
         # OSPREY checking needed
         # :NOTE: should we consider 80m --> 84m ?
         # :NOTE: !wake effect - really needed
-        # :NOTE: lugs
-        # :NOTE: Bets limit
         # ------------------------------------------------------------
         # 1. Time features
         # ------------------------------------------------------------
@@ -487,6 +549,23 @@ class ModelPreprocessor:
             if hour is not None:
                 df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
                 df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+
+                if self._flag("time_interactions"):
+                    df["is_evening_20_23"] = (
+                        (hour >= 20) & (hour <= 23)
+                    ).astype(float)
+
+                    df["is_late_evening_21_23"] = (
+                        (hour >= 21) & (hour <= 23)
+                    ).astype(float)
+
+                    df["is_night_0_6"] = (
+                        (hour >= 0) & (hour <= 6)
+                    ).astype(float)
+
+                    df["is_good_midday_10_12"] = (
+                        (hour >= 10) & (hour <= 12)
+                    ).astype(float)
 
             if self.datetime_col in df.columns:
                 month = df[self.datetime_col].dt.month
@@ -575,6 +654,7 @@ class ModelPreprocessor:
                             df[f"power_curve_proxy_{height}m"]
                             * INSTALLED_CAPACITY_MW
                     )
+
         # ------------------------------------------------------------
         # 3.2 Wind shear features
         # ------------------------------------------------------------
@@ -645,6 +725,49 @@ class ModelPreprocessor:
                 df["is_extreme_gust10"]
                 * ((ws120 >= 12.0) | (ws180 >= 15.0)).astype(float)
             )
+
+        # ------------------------------------------------------------
+        # 3.4 Ramp-zone features: painful 6-12 m/s range
+        # ------------------------------------------------------------
+        if self._flag("ramp_zone_features"):
+            ws80 = _numeric_series(df, ws80_col, default=np.nan)
+            ws120 = _numeric_series(df, ws120_col, default=np.nan)
+            ws180 = _numeric_series(df, ws180_col, default=np.nan)
+
+            # Основные проблемные зоны по debug:
+            # wind_speed_120m 6-9 и 9-12 дают максимальную ошибку.
+            df["is_ws120_6_9"] = ((ws120 >= 6.0) & (ws120 < 9.0)).astype(float)
+            df["is_ws120_9_12"] = ((ws120 >= 9.0) & (ws120 < 12.0)).astype(float)
+            df["is_ws120_6_12"] = ((ws120 >= 6.0) & (ws120 < 12.0)).astype(float)
+
+            # Piecewise линейные куски, чтобы модель лучше ловила форму power curve.
+            df["ws120_piece_3_6"] = (ws120.clip(3.0, 6.0) - 3.0).clip(lower=0.0)
+            df["ws120_piece_6_9"] = (ws120.clip(6.0, 9.0) - 6.0).clip(lower=0.0)
+            df["ws120_piece_9_12"] = (ws120.clip(9.0, 12.0) - 9.0).clip(lower=0.0)
+
+            df["ws80_piece_3_6"] = (ws80.clip(3.0, 6.0) - 3.0).clip(lower=0.0)
+            df["ws80_piece_6_9"] = (ws80.clip(6.0, 9.0) - 6.0).clip(lower=0.0)
+            df["ws80_piece_9_12"] = (ws80.clip(9.0, 12.0) - 9.0).clip(lower=0.0)
+
+            # Насколько 120м уходит от 80м именно в ramp-zone.
+            df["ws120_minus_ws80_in_ramp"] = (
+                    (ws120 - ws80) * df["is_ws120_6_12"]
+            )
+
+            df["ws180_minus_ws120_in_ramp"] = (
+                    (ws180 - ws120) * df["is_ws120_6_12"]
+            )
+
+            # Interaction с физическими proxy.
+            if "expected_power_proxy_120m" in df.columns:
+                df["expected_power_120m_x_ws120_6_12"] = (
+                        df["expected_power_proxy_120m"] * df["is_ws120_6_12"]
+                )
+
+            if "wind_power_density_120m" in df.columns:
+                df["wind_power_density_120m_x_ramp"] = (
+                        df["wind_power_density_120m"] * df["is_ws120_6_12"]
+                )
         # ------------------------------------------------------------
         # 4. Air density
         # ------------------------------------------------------------
@@ -669,6 +792,53 @@ class ModelPreprocessor:
                 pressure_pa = pressure
 
             df["air_density"] = pressure_pa / (R_DRY_AIR * temp_k)
+
+        # ------------------------------------------------------------
+        # 4.05 Rotor-equivalent wind speed proxy
+        # ------------------------------------------------------------
+        if self._flag("rotor_equivalent_wind"):
+            ws10 = _numeric_series(df, ws10_col, default=np.nan)
+            ws80 = _numeric_series(df, ws80_col, default=np.nan)
+            ws120 = _numeric_series(df, ws120_col, default=np.nan)
+            ws180 = _numeric_series(df, ws180_col, default=np.nan)
+
+            # Rough rotor-disk proxy.
+            # Hub is close to 84m, rotor spans roughly 18-150m.
+            # 80m and 120m get most weight; 10m and 180m are weak boundary signals.
+            rews_cube = (
+                    0.10 * (ws10 ** 3)
+                    + 0.45 * (ws80 ** 3)
+                    + 0.40 * (ws120 ** 3)
+                    + 0.05 * (ws180 ** 3)
+            )
+
+            df["rotor_equiv_ws_cube"] = rews_cube
+            df["rotor_equiv_ws"] = np.cbrt(rews_cube.clip(lower=0.0))
+
+            rews = df["rotor_equiv_ws"]
+
+            rews_power_curve = ((rews.clip(3.0, 12.0) - 3.0) / 9.0) ** 3
+            df["power_curve_proxy_rews"] = rews_power_curve.clip(0.0, 1.0)
+
+            if "available_capacity_mw" in df.columns:
+                df["expected_power_proxy_rews"] = (
+                        df["power_curve_proxy_rews"] * df["available_capacity_mw"]
+                )
+            else:
+                df["expected_power_proxy_rews"] = (
+                        df["power_curve_proxy_rews"] * INSTALLED_CAPACITY_MW
+                )
+
+            if "air_density" in df.columns:
+                df["wind_power_density_rews"] = (
+                        0.5 * df["air_density"] * df["rotor_equiv_ws_cube"]
+                )
+            if "expected_power_proxy_rews" in df.columns:
+                df["expected_power_density_adj_rews"] = (
+                    df["expected_power_proxy_rews"]
+                    * df["air_density"]
+                    / STANDARD_AIR_DENSITY
+                )
 
         # ------------------------------------------------------------
         # 4.1 Icing / cold wet weather features
@@ -733,6 +903,52 @@ class ModelPreprocessor:
 
             # Вертикальный температурный градиент.
             df["temp_gradient_120_80"] = temp120 - temp80
+
+        # ------------------------------------------------------------
+        # 4.2 Precipitation stress features
+        # ------------------------------------------------------------
+        if self._flag("precipitation_stress"):
+            rain = _numeric_series(df, "rain", default=0.0).fillna(0.0)
+            showers = _numeric_series(df, "showers", default=0.0).fillna(0.0)
+            snowfall = _numeric_series(df, "snowfall", default=0.0).fillna(0.0)
+
+            ws80 = _numeric_series(df, ws80_col, default=np.nan)
+            ws120 = _numeric_series(df, ws120_col, default=np.nan)
+
+            df["rain_plus_showers"] = rain + showers
+            df["precip_stress_score"] = rain + showers + 0.5 * snowfall
+
+            df["is_any_rain"] = (rain > 0.0).astype(float)
+            df["is_medium_rain"] = ((rain > 0.1) & (rain <= 1.0)).astype(float)
+            df["is_heavy_rain"] = (rain > 1.0).astype(float)
+
+            df["is_any_showers"] = (showers > 0.0).astype(float)
+            df["is_medium_showers"] = ((showers > 0.1) & (showers <= 1.0)).astype(float)
+            df["is_heavy_showers"] = (showers > 1.0).astype(float)
+
+            # Влажная погода × скорость ветра.
+            df["precip_stress_x_ws80"] = df["precip_stress_score"] * ws80
+            df["precip_stress_x_ws120"] = df["precip_stress_score"] * ws120
+
+            # Самая подозрительная зона: дождь/ливни + ramp-zone 6-12 м/с.
+            df["wet_ramp_120m"] = (
+                df["precip_stress_score"]
+                * ((ws120 >= 6.0) & (ws120 < 12.0)).astype(float)
+            )
+
+            if "expected_power_proxy_120m" in df.columns:
+                df["expected_power_120m_x_precip"] = (
+                    df["expected_power_proxy_120m"] * df["precip_stress_score"]
+                )
+
+            if "is_evening_20_23" in df.columns:
+                df["evening_x_precip_stress"] = (
+                    df["is_evening_20_23"] * df["precip_stress_score"]
+                )
+
+                df["evening_x_showers"] = (
+                    df["is_evening_20_23"] * df["is_any_showers"]
+                )
         # ------------------------------------------------------------
         # 5. Wind power density
         # ------------------------------------------------------------
@@ -965,6 +1181,7 @@ class ModelPreprocessor:
             # Raw weather features
             ws80_col = _find_wind_speed_col(df, 80)
             ws120_col = _find_wind_speed_col(df, 120)
+            ws180_col = _find_wind_speed_col(df, 180)
             gust10_col = _find_wind_gust_col(df, 10)
 
             if ws80_col is not None:
@@ -972,6 +1189,9 @@ class ModelPreprocessor:
 
             if ws120_col is not None:
                 lag_sources.append(("ws120", ws120_col))
+
+            if ws180_col is not None:
+                lag_sources.append(("ws180", ws180_col))
 
             if gust10_col is not None:
                 lag_sources.append(("gust10", gust10_col))
@@ -987,8 +1207,24 @@ class ModelPreprocessor:
                 "expected_power_proxy",
                 "expected_power_density_adj",
                 "wind_power_density",
+
+                # 120m / 180m physics
+                "expected_power_proxy_120m",
+                "expected_power_proxy_180m",
+                "wind_power_density_120m",
+                "wind_power_density_180m",
+
+                # rotor-equivalent physics
+                "expected_power_proxy_rews",
+                "expected_power_density_adj_rews",
+                "wind_power_density_rews",
+                "rotor_equiv_ws",
+
+                # direction
                 "wind_dir_80m_sin",
                 "wind_dir_80m_cos",
+                "wind_dir_120m_sin",
+                "wind_dir_120m_cos",
             ]
 
             for col in engineered_lag_columns:
@@ -1011,6 +1247,22 @@ class ModelPreprocessor:
                     prefix=prefix,
                     datetime_col=self.datetime_col,
                 )
+
+            # Precipitation memory:
+            # не просто "дождь сейчас", а "дождь/ливни/снег шли последние часы".
+            for prefix, col in [
+                ("rain", "rain"),
+                ("showers", "showers"),
+                ("snowfall", "snowfall"),
+                ("precip_stress", "precip_stress_score"),
+            ]:
+                if col in df.columns:
+                    df = _add_past_window_sum_features(
+                        df=df,
+                        value_col=col,
+                        prefix=prefix,
+                        datetime_col=self.datetime_col,
+                    )
 
         return df.replace([np.inf, -np.inf], np.nan)
 
