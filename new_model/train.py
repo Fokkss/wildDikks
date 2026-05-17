@@ -19,6 +19,7 @@ import pandas as pd
 
 from new_model.config import (
     TARGET_COL,
+    DATETIME_COL,
     FARM_CAPACITY_MW,
     read_csv,
     normalize_columns,
@@ -174,6 +175,31 @@ def build_ensemble(
         catboost_weight=catboost_weight,
         xgboost_weight=xgboost_weight,)
 
+def split_by_datetime_range(
+    df: pd.DataFrame,
+    valid_start: str,
+    valid_end: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if DATETIME_COL not in df.columns:
+        raise ValueError(f"Datetime column {DATETIME_COL!r} not found.")
+
+    dt = pd.to_datetime(df[DATETIME_COL], errors="coerce")
+    start = pd.to_datetime(valid_start)
+    end = pd.to_datetime(valid_end)
+
+    valid_mask = (dt >= start) & (dt < end)
+    train_mask = dt < start
+
+    train_part = df.loc[train_mask].reset_index(drop=True)
+    valid_part = df.loc[valid_mask].reset_index(drop=True)
+
+    if train_part.empty:
+        raise ValueError("Train part is empty. Choose later valid_start.")
+
+    if valid_part.empty:
+        raise ValueError("Valid part is empty. Check valid_start/valid_end.")
+
+    return train_part, valid_part
 
 def main() -> None:
     args = parse_args()
@@ -231,8 +257,7 @@ def main() -> None:
 
     y_valid = pd.to_numeric(valid_part[TARGET_COL], errors="coerce")
     valid_pred = validation_model.predict(valid_part)
-    # valid_pred = clip_predictions_to_available_capacity(valid_pred, valid_part)
-    valid_pred = np.clip(valid_pred, 0.0, FARM_CAPACITY_MW)
+    valid_pred = clip_predictions_to_available_capacity(valid_pred, valid_part)
 
     valid_error_percent = competition_error_percent(y_valid, valid_pred)
     valid_mae_mw = float(np.mean(np.abs(y_valid.to_numpy() - valid_pred)))
@@ -287,8 +312,7 @@ def main() -> None:
     print("[6/6] Saving metrics and feature importances...")
     train_y = pd.to_numeric(df[TARGET_COL], errors="coerce")
     train_pred = final_model.predict(df)
-    # train_pred = clip_predictions_to_available_capacity(train_pred, df)
-    train_pred = np.clip(train_pred, 0.0, FARM_CAPACITY_MW)
+    train_pred = clip_predictions_to_available_capacity(train_pred, df)
 
     train_error_percent = competition_error_percent(train_y, train_pred)
     train_mae_mw = float(np.mean(np.abs(train_y.to_numpy() - train_pred)))

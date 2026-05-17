@@ -13,24 +13,23 @@ import re
 TARGET_COL = "Выработка"
 DATETIME_COL = "METEOFORECASTHOUR_OPENM_Datetime"
 
-# Из README / условия: 26 турбин * 3.465 МВт = 90.09 МВт.
 INSTALLED_CAPACITY_MW = 90.09
 
-# smth
 N_TURBINES = 26
 TURBINE_CAPACITY_MW = INSTALLED_CAPACITY_MW / N_TURBINES
 R_DRY_AIR = 287.05
 STANDARD_AIR_DENSITY = 1.225  # kg/m^3
 BETZ_LIMIT_CP = 16.0 / 27.0   # ≈ 0.593, theoretical max efficiency
+R_WATER_VAPOR = 461.5
 
 
 ROTOR_DIAMETER_M = 132.0
 ROTOR_SWEPT_AREA_M2 = np.pi * (ROTOR_DIAMETER_M / 2.0) ** 2
 
-LAG_HOURS = (1, 2, 3, 6, 12, 24, 48, 72, 168)
+LAG_HOURS = (1, 2, 3, 6, 12, 24)
 DIFF_HOURS = (1, 3, 24)
-ROLLING_MEAN_HOURS = (3, 6, 12, 24, 72)
-ROLLING_STD_HOURS = (6, 24, 72)
+ROLLING_MEAN_HOURS = (3, 6, 12, 24)
+ROLLING_STD_HOURS = (3, 6, 12)
 
 
 # Названия, которые приводим к нормальному виду.
@@ -64,6 +63,9 @@ DEFAULT_FEATURE_FLAGS = {
     "time_interactions": True,
 
     "rotor_equivalent_wind": True,
+    "yaw_misalignment": True,
+    "moist_air_density": True,
+
 }
 
 
@@ -259,6 +261,412 @@ def _angle_diff_deg(
     """
 
     return ((a_deg - b_deg + 180.0) % 360.0) - 180.0
+
+
+def _saturation_vapor_pressure_pa(temp_c: pd.Series) -> pd.Series:
+    """
+    Saturation vapor pressure proxy by Magnus/Tetens-style formula.
+
+    Returns Pa.
+    Uses water formula for T >= 0 C and ice-ish formula for T < 0 C.
+    """
+
+    temp_c = pd.to_numeric(temp_c, errors="coerce")
+
+    # hPa over water
+    es_water_hpa = 6.112 * np.exp((17.67 * temp_c) / (temp_c + 243.5))
+
+    # hPa over ice / cold conditions
+    es_ice_hpa = 6.112 * np.exp((22.46 * temp_c) / (temp_c + 272.62))
+
+    es_hpa = pd.Series(
+        np.where(temp_c < 0.0, es_ice_hpa, es_water_hpa),
+        index=temp_c.index,
+    )
+
+    return es_hpa * 100.0
+
+
+def _normalize_cloud_fraction(cloud: pd.Series) -> pd.Series:
+    """
+    cloud_cover иногда бывает 0..1, иногда 0..100.
+    Приводим к 0..1.
+    """
+
+    cloud = pd.to_numeric(cloud, errors="coerce").fillna(0.0)
+    median = cloud.median(skipna=True)
+
+    if pd.notna(median) and median > 1.5:
+        cloud = cloud / 100.0
+
+    return cloud.clip(0.0, 1.0)
+
+
+def _add_moist_air_density_features(
+    df: pd.DataFrame,
+    temp_col: str | None,
+    pressure_col: str | None,
+) -> pd.DataFrame:
+    """
+    Proxy for moist-air density.
+
+    Важно:
+    - не заменяем df["air_density"], чтобы не сломать старый полезный сигнал;
+    - добавляем отдельные moist_* признаки;
+    - RH не измерена напрямую, поэтому оцениваем её через осадки/облачность.
+    """
+
+    if temp_col is None or pressure_col is None:
+        return df
+
+    if temp_col not in df.columns or pressure_col not in df.columns:
+        return df
+
+    out = df.copy()
+
+    temp = pd.to_numeric(out[temp_col], errors="coerce")
+    pressure = pd.to_numeric(out[pressure_col], errors="coerce")
+
+    temp_median = temp.median(skipna=True)
+    pressure_median = pressure.median(skipna=True)
+
+    # C / K auto-detect
+    if pd.notna(temp_median) and temp_median > 150:
+        temp_k = temp
+        temp_c = temp - 273.15
+    else:
+        temp_c = temp
+        temp_k = temp + 273.15
+
+    # hPa / Pa auto-detect
+    if pd.notna(pressure_median) and pressure_median < 2000:
+        pressure_pa = pressure * 100.0
+    else:
+        pressure_pa = pressure
+
+    rain = _numeric_series(out, "rain", default=0.0).fillna(0.0).clip(lower=0.0)
+    showers = _numeric_series(out, "showers", default=0.0).fillna(0.0).clip(lower=0.0)
+    snowfall = _numeric_series(out, "snowfall", default=0.0).fillna(0.0).clip(lower=0.0)
+
+    if "cloud_cover_low" in out.columns:
+        cloud_low = _normalize_cloud_fraction(out["cloud_cover_low"])
+    else:
+        cloud_low = pd.Series(0.0, index=out.index)
+
+    precip_total = rain + showers + snowfall
+
+    # Осадки в "попугаях": не знаем единицы, поэтому log1p устойчивее.
+    precip_intensity_proxy = np.log1p(precip_total).clip(0.0, 2.0) / 2.0
+    showers_intensity_proxy = np.log1p(showers).clip(0.0, 2.0) / 2.0
+    snow_intensity_proxy = np.log1p(snowfall).clip(0.0, 2.0) / 2.0
+
+    has_rain = (rain > 0.0).astype(float)
+    has_showers = (showers > 0.0).astype(float)
+    has_snowfall = (snowfall > 0.0).astype(float)
+    has_precip = (precip_total > 0.0).astype(float)
+
+    # Базовая эвристика RH:
+    # - без осадков не ставим 100%;
+    # - при ливнях почти насыщение;
+    # - при снеге высокая влажность, но эффект плотности меньше из-за холода.
+    rh_proxy = (
+        0.50
+        + 0.25 * cloud_low
+        + 0.25 * precip_intensity_proxy
+        + 0.10 * showers_intensity_proxy
+        + 0.05 * snow_intensity_proxy
+    )
+
+    rh_proxy = pd.Series(rh_proxy, index=out.index)
+
+    rh_proxy = rh_proxy.where(
+        has_precip <= 0.0,
+        np.maximum(rh_proxy, 0.85),
+    )
+
+    rh_proxy = rh_proxy.where(
+        has_rain <= 0.0,
+        np.maximum(rh_proxy, 0.90),
+    )
+
+    rh_proxy = rh_proxy.where(
+        has_showers <= 0.0,
+        np.maximum(rh_proxy, 0.97),
+    )
+
+    rh_proxy = rh_proxy.where(
+        has_snowfall <= 0.0,
+        np.maximum(rh_proxy, 0.88),
+    )
+
+    rh_proxy = rh_proxy.clip(0.35, 1.0)
+
+    saturation_vapor_pressure_pa = _saturation_vapor_pressure_pa(temp_c)
+
+    vapor_pressure_pa = rh_proxy * saturation_vapor_pressure_pa
+
+    # Не даём водяному пару стать физически невозможным.
+    vapor_pressure_pa = vapor_pressure_pa.clip(
+        lower=0.0,
+        upper=pressure_pa * 0.99,
+    )
+
+    dry_air_density = pressure_pa / (R_DRY_AIR * temp_k)
+
+    moist_air_density = (
+        (pressure_pa - vapor_pressure_pa) / (R_DRY_AIR * temp_k)
+        + vapor_pressure_pa / (R_WATER_VAPOR * temp_k)
+    )
+
+    out["relative_humidity_proxy"] = rh_proxy
+    out["saturation_vapor_pressure_pa_proxy"] = saturation_vapor_pressure_pa
+    out["vapor_pressure_pa_proxy"] = vapor_pressure_pa
+
+    out["moist_air_density"] = moist_air_density
+    out["air_density_dry_proxy_for_moist_calc"] = dry_air_density
+    out["air_density_moist_delta"] = moist_air_density - dry_air_density
+    out["air_density_moist_ratio"] = moist_air_density / (dry_air_density + 1e-6)
+
+    # Specific humidity proxy. Полезно как отдельная метео-фича.
+    out["specific_humidity_proxy"] = (
+        0.622 * vapor_pressure_pa / (pressure_pa - 0.378 * vapor_pressure_pa + 1e-6)
+    )
+
+    # Vapor pressure deficit: чем меньше, тем ближе к насыщению.
+    out["vapor_pressure_deficit_pa_proxy"] = (
+        saturation_vapor_pressure_pa - vapor_pressure_pa
+    ).clip(lower=0.0)
+
+    # Механика: влажная погода как режим, не только физическая плотность.
+    out["wet_air_proxy"] = has_precip
+    out["rain_or_showers_proxy"] = ((rain + showers) > 0.0).astype(float)
+    out["humid_low_cloud_proxy"] = rh_proxy * cloud_low
+    out["humid_precip_proxy"] = rh_proxy * has_precip
+
+    # Moist wind power density for existing wind-speed cubes.
+    cube_to_output = {
+        "ws80_cube": "wind_power_density_moist",
+        "ws120_cube": "wind_power_density_120m_moist",
+        "ws180_cube": "wind_power_density_180m_moist",
+        "rotor_equiv_ws_cube": "wind_power_density_rews_moist",
+        "gust10_cube": "gust10_power_density_moist",
+    }
+
+    for cube_col, out_col in cube_to_output.items():
+        if cube_col in out.columns:
+            out[out_col] = 0.5 * out["moist_air_density"] * out[cube_col]
+
+    # Density-adjusted expected power variants.
+    expected_power_cols = [
+        "expected_power_proxy",
+        "expected_power_proxy_120m",
+        "expected_power_proxy_180m",
+        "expected_power_proxy_rews",
+    ]
+
+    for col in expected_power_cols:
+        if col in out.columns:
+            out[f"{col}_moist_density_adj"] = (
+                out[col] * out["moist_air_density"] / STANDARD_AIR_DENSITY
+            )
+
+            out[f"{col}_moist_minus_dry_density_adj"] = (
+                out[f"{col}_moist_density_adj"]
+                - out[col] * dry_air_density / STANDARD_AIR_DENSITY
+            )
+
+    return out
+
+
+def _to_wind_dir_deg(raw: pd.Series) -> pd.Series:
+    raw = pd.to_numeric(raw, errors="coerce")
+    q99 = raw.dropna().quantile(0.99)
+
+    # В ваших данных направление похоже на degrees / 1000:
+    # 0.273 -> 273 degrees.
+    return (raw * 1000.0) % 360.0
+
+
+def _add_yaw_misalignment_features(
+    df: pd.DataFrame,
+    wind_dir_col: str | None,
+    wind_speed_col: str | None,
+    datetime_col: str,
+    prefix: str,
+    power_proxy_col: str | None = None,
+    yaw_minutes: float = 10.0,
+) -> pd.DataFrame:
+    """
+    Yaw / self-orientation loss features.
+
+    Идея:
+    - если направление ветра резко меняется, ВЭУ тратит время на поворот;
+    - 10 минут поворота ~= 1/6 часа потенциальной просадки;
+    - это не ручное вычитание из прогноза, а признаки для модели.
+    """
+
+    if (
+        wind_dir_col is None
+        or wind_speed_col is None
+        or wind_dir_col not in df.columns
+        or wind_speed_col not in df.columns
+        or datetime_col not in df.columns
+    ):
+        return df
+
+    out = df.copy()
+
+    dt = pd.to_datetime(out[datetime_col], errors="coerce")
+
+    # В ваших данных направление уже правильно трактуется как degrees / 1000.
+    wind_dir_raw = pd.to_numeric(out[wind_dir_col], errors="coerce")
+    wind_dir_deg = (wind_dir_raw * 1000.0) % 360.0
+
+    ws = pd.to_numeric(out[wind_speed_col], errors="coerce")
+
+    dir_by_datetime = (
+        pd.DataFrame(
+            {
+                "__dt": dt,
+                "__dir": wind_dir_deg,
+            }
+        )
+        .dropna(subset=["__dt"])
+        .drop_duplicates("__dt", keep="last")
+        .set_index("__dt")["__dir"]
+        .sort_index()
+    )
+
+    if dir_by_datetime.empty:
+        return out
+
+    lag1_dir = (dt - pd.Timedelta(hours=1)).map(dir_by_datetime)
+    lag2_dir = (dt - pd.Timedelta(hours=2)).map(dir_by_datetime)
+    lag3_dir = (dt - pd.Timedelta(hours=3)).map(dir_by_datetime)
+
+    signed_change_1h = _angle_diff_deg(wind_dir_deg, lag1_dir)
+    signed_change_2h = _angle_diff_deg(wind_dir_deg, lag2_dir)
+    signed_change_3h = _angle_diff_deg(wind_dir_deg, lag3_dir)
+
+    abs_change_1h = signed_change_1h.abs()
+    abs_change_2h = signed_change_2h.abs()
+    abs_change_3h = signed_change_3h.abs()
+
+    out[f"{prefix}_dir_change_signed_1h"] = signed_change_1h
+    out[f"{prefix}_dir_change_abs_1h"] = abs_change_1h
+    out[f"{prefix}_dir_change_abs_2h"] = abs_change_2h
+    out[f"{prefix}_dir_change_abs_3h"] = abs_change_3h
+
+    for threshold in (15, 30, 45, 60, 90):
+        out[f"{prefix}_turn_gt_{threshold}deg"] = (
+            abs_change_1h >= threshold
+        ).astype(float)
+
+    # Чем выше ветер, тем потенциально больнее yaw-промах.
+    out[f"{prefix}_change_abs_x_ws"] = abs_change_1h * ws
+    out[f"{prefix}_change_abs_x_ws_sq"] = abs_change_1h * (ws ** 2)
+    out[f"{prefix}_change_abs_x_ws_cube"] = abs_change_1h * (ws ** 3)
+
+    # Рабочие зоны турбины.
+    out[f"{prefix}_active_ws_zone"] = ((ws >= 3.0) & (ws <= 25.0)).astype(float)
+    out[f"{prefix}_ramp_ws_zone"] = ((ws >= 3.0) & (ws < 12.0)).astype(float)
+    out[f"{prefix}_rated_ws_zone"] = ((ws >= 12.0) & (ws <= 25.0)).astype(float)
+
+    yaw_hour_fraction = yaw_minutes / 60.0
+
+    # Насыщаем эффект: после 90 градусов считаем поворот уже большим.
+    turn_intensity = (abs_change_1h / 90.0).clip(lower=0.0, upper=1.0)
+
+    out[f"{prefix}_turn_intensity"] = turn_intensity
+    out[f"{prefix}_yaw_loss_fraction_proxy"] = (
+        yaw_hour_fraction
+        * turn_intensity
+        * out[f"{prefix}_active_ws_zone"]
+    )
+
+    out[f"{prefix}_yaw_loss_fraction_x_ramp"] = (
+        out[f"{prefix}_yaw_loss_fraction_proxy"]
+        * out[f"{prefix}_ramp_ws_zone"]
+    )
+
+    out[f"{prefix}_yaw_loss_fraction_x_rated"] = (
+        out[f"{prefix}_yaw_loss_fraction_proxy"]
+        * out[f"{prefix}_rated_ws_zone"]
+    )
+
+    if power_proxy_col is not None and power_proxy_col in out.columns:
+        out[f"{prefix}_yaw_loss_mw_proxy"] = (
+            out[power_proxy_col]
+            * out[f"{prefix}_yaw_loss_fraction_proxy"]
+        )
+
+    # Частые смены направления за прошлые окна.
+    change_by_datetime = (
+        pd.DataFrame(
+            {
+                "__dt": dt,
+                "__change": abs_change_1h,
+            }
+        )
+        .dropna(subset=["__dt"])
+        .drop_duplicates("__dt", keep="last")
+        .set_index("__dt")["__change"]
+        .sort_index()
+    )
+
+    turn30_by_datetime = (change_by_datetime >= 30.0).astype(float)
+    turn60_by_datetime = (change_by_datetime >= 60.0).astype(float)
+
+    for window_h in (3, 6, 12):
+        out[f"{prefix}_change_sum_{window_h}h"] = dt.map(
+            change_by_datetime.rolling(f"{window_h}h", min_periods=1).sum()
+        )
+
+        out[f"{prefix}_change_mean_{window_h}h"] = dt.map(
+            change_by_datetime.rolling(f"{window_h}h", min_periods=1).mean()
+        )
+
+        out[f"{prefix}_change_max_{window_h}h"] = dt.map(
+            change_by_datetime.rolling(f"{window_h}h", min_periods=1).max()
+        )
+
+        out[f"{prefix}_turn30_count_{window_h}h"] = dt.map(
+            turn30_by_datetime.rolling(f"{window_h}h", min_periods=1).sum()
+        )
+
+        out[f"{prefix}_turn60_count_{window_h}h"] = dt.map(
+            turn60_by_datetime.rolling(f"{window_h}h", min_periods=1).sum()
+        )
+
+    # Осцилляция: направление меняется туда-сюда, а не просто один раз повернулось.
+    signed_by_datetime = (
+        pd.DataFrame(
+            {
+                "__dt": dt,
+                "__signed": signed_change_1h,
+            }
+        )
+        .dropna(subset=["__dt"])
+        .drop_duplicates("__dt", keep="last")
+        .set_index("__dt")["__signed"]
+        .sort_index()
+    )
+
+    sign_now = np.sign(signed_by_datetime)
+    sign_prev = sign_now.shift(1)
+
+    oscillation = (
+        (sign_now != 0)
+        & (sign_prev != 0)
+        & (sign_now != sign_prev)
+    ).astype(float)
+
+    for window_h in (3, 6, 12):
+        out[f"{prefix}_oscillation_count_{window_h}h"] = dt.map(
+            oscillation.rolling(f"{window_h}h", min_periods=1).sum()
+        )
+
+    return out
 
 
 def _add_time_lag_features(
@@ -841,6 +1249,16 @@ class ModelPreprocessor:
                 )
 
         # ------------------------------------------------------------
+        # 4.075 Moist air density proxy
+        # ------------------------------------------------------------
+        if self._flag("moist_air_density"):
+            df = _add_moist_air_density_features(
+                df=df,
+                temp_col=temp_col,
+                pressure_col=pressure_col,
+            )
+
+        # ------------------------------------------------------------
         # 4.1 Icing / cold wet weather features
         # ------------------------------------------------------------
         if self._flag("icing"):
@@ -1108,6 +1526,30 @@ class ModelPreprocessor:
                 df["abs_wind_veer_180_80"] = df["wind_veer_180_80"].abs()
 
         df = df.copy()
+
+        # ------------------------------------------------------------
+        # 7.1 Yaw / frequent wind direction changes
+        # ------------------------------------------------------------
+        if self._flag("yaw_misalignment"):
+            for height in (80, 120, 180):
+                wind_dir_col = _find_wind_direction_col(df, height)
+                wind_speed_col = _find_wind_speed_col(df, height)
+
+                if height == 80:
+                    power_proxy_col = "expected_power_proxy"
+                else:
+                    power_proxy_col = f"expected_power_proxy_{height}m"
+
+                df = _add_yaw_misalignment_features(
+                    df=df,
+                    wind_dir_col=wind_dir_col,
+                    wind_speed_col=wind_speed_col,
+                    datetime_col=self.datetime_col,
+                    prefix=f"yaw{height}",
+                    power_proxy_col=power_proxy_col,
+                    yaw_minutes=10.0,
+                )
+
         # ------------------------------------------------------------
         # 8. Betz limit features
         # ------------------------------------------------------------
