@@ -2,7 +2,7 @@ name: ML Pipeline Check
 
 on:
   push:
-    branches: [ "main", "solvrxx_branch", "pd_branch", "cheesyplate_branch", "vaas_branch" ]
+    branches: [ "main", "solvrxx_branch", "pd_branch", "cheesyplate_branch", "vaas_branch", "solvrx_final"]
   pull_request:
     branches: [ "main" ]
 
