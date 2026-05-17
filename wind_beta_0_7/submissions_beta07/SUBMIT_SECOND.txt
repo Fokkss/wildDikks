@@ -1,0 +1,3 @@
+submissions_beta07/beta07_anchor_bag_legacy_rules45_bias0p5.csv
+submissions_beta07/beta07_anchor_1700_d4_w75_rules60_bias0p5.csv
+submissions_beta07/beta07_anchor_1700_d4_w75_rules25_bias0p5.csv

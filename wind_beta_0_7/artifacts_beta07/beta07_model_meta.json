@@ -1,0 +1,73 @@
+{
+  "target_col": "Выработка. Результирующий расчет",
+  "models": {
+    "legacy1700": {
+      "name": "legacy1700",
+      "n_estimators": 1700,
+      "max_depth": 3,
+      "use_lags": true,
+      "use_time": true,
+      "use_availability": true,
+      "objective": "reg:absoluteerror",
+      "n_features": 140
+    },
+    "legacy1892": {
+      "name": "legacy1892",
+      "n_estimators": 1892,
+      "max_depth": 3,
+      "use_lags": true,
+      "use_time": true,
+      "use_availability": true,
+      "objective": "reg:absoluteerror",
+      "n_features": 140
+    },
+    "legacy2500": {
+      "name": "legacy2500",
+      "n_estimators": 2500,
+      "max_depth": 3,
+      "use_lags": true,
+      "use_time": true,
+      "use_availability": true,
+      "objective": "reg:absoluteerror",
+      "n_features": 140
+    },
+    "depth4_1892": {
+      "name": "depth4_1892",
+      "n_estimators": 1892,
+      "max_depth": 4,
+      "use_lags": true,
+      "use_time": true,
+      "use_availability": true,
+      "objective": "reg:absoluteerror",
+      "n_features": 140
+    },
+    "q1recent1700": {
+      "name": "q1recent1700",
+      "n_estimators": 1700,
+      "max_depth": 3,
+      "use_lags": true,
+      "use_time": true,
+      "use_availability": true,
+      "objective": "reg:absoluteerror",
+      "n_features": 140
+    },
+    "nolags1700": {
+      "name": "nolags1700",
+      "n_estimators": 1700,
+      "max_depth": 3,
+      "use_lags": false,
+      "use_time": true,
+      "use_availability": true,
+      "objective": "reg:absoluteerror",
+      "n_features": 132
+    }
+  },
+  "ensembles": [
+    "anchor_1700_d4_w75",
+    "anchor_1700_d4_w80",
+    "anchor_1700_d4_nolag",
+    "anchor_1700_q1_d4",
+    "anchor_bag_legacy",
+    "anchor_balanced"
+  ]
+}
