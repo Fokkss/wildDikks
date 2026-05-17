@@ -26,3 +26,9 @@ artifacts/
 
 # jupyter
 *.ipynb
+
+artifacts_beta*/
+submissions_beta*/
+reports_beta*/
+*.joblib
+*.pkl
