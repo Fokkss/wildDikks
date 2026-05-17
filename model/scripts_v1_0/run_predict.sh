@@ -9,4 +9,5 @@ OUTPUT_PATH=${2:-submissions_v1_0/submission_2027_v1_0.csv}
 python -m new_model_v1_0.predict \
   --features_path "$FEATURES_PATH" \
   --artifact_dir artifacts_v1_0 \
-  --output_path "$OUTPUT_PATH"
+  --output_path "$OUTPUT_PATH" \
+  --header

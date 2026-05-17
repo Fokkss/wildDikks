@@ -119,7 +119,8 @@ def main() -> None:
     parser.add_argument("--artifact_dir", default="artifacts_v1_0", help="Directory with trained weights")
     parser.add_argument("--output_path", default="submissions_v1_0/submission_v1_0.csv")
     parser.add_argument("--config_path", default=None, help="Optional config JSON path")
-    parser.add_argument("--header", action="store_true", help="Write CSV header 'prediction'. Default is no header per ТЗ.")
+    parser.add_argument("--header", dest="header", action="store_true", default=True, help="Write CSV header 'prediction'. Default: enabled.")
+    parser.add_argument("--no_header", dest="header", action="store_false", help="Write CSV without header.")
     args = parser.parse_args()
 
     # эта зона для загрузки данных и финального конфига

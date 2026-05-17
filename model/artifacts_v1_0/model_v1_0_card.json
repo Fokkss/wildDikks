@@ -20,7 +20,7 @@
       "profile": "density_boost"
     },
     "output": {
-      "default_header": false,
+      "default_header": true,
       "prediction_column": "prediction"
     },
     "random_seed": 42

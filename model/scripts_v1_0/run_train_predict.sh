@@ -15,4 +15,5 @@ python -m new_model_v1_0.train \
   --valid_path "$FEATURES_PATH" \
   --target "$TARGET" \
   --artifact_dir artifacts_v1_0 \
-  --output_path submissions_v1_0/submission_v1_0.csv
+  --output_path submissions_v1_0/submission_v1_0.csv \
+  --header
