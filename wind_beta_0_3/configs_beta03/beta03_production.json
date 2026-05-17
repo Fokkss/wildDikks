@@ -1,0 +1,14 @@
+{
+  "target_col": "Выработка. Результирующий расчет",
+  "capacity_mw": 90.09,
+  "hub_height_m": 84,
+  "default_artifacts_dir": "artifacts_beta03",
+  "default_submissions_dir": "submissions_beta03",
+  "default_reports_dir": "reports_beta03",
+  "candidate_models": [
+    {"name": "legacy_exact_1892", "learning_rate": 0.03, "max_depth": 3, "min_child_weight": 5, "subsample": 0.85, "colsample_bytree": 0.85, "reg_alpha": 0.04, "reg_lambda": 5.0},
+    {"name": "legacy_exact_2500", "learning_rate": 0.03, "max_depth": 3, "min_child_weight": 5, "subsample": 0.85, "colsample_bytree": 0.85, "reg_alpha": 0.04, "reg_lambda": 5.0},
+    {"name": "legacy_depth4_2200", "learning_rate": 0.03, "max_depth": 4, "min_child_weight": 6, "subsample": 0.85, "colsample_bytree": 0.85, "reg_alpha": 0.04, "reg_lambda": 5.0},
+    {"name": "friend_depth5_1800", "learning_rate": 0.03, "max_depth": 5, "min_child_weight": 8, "subsample": 0.85, "colsample_bytree": 0.85, "reg_alpha": 0.05, "reg_lambda": 5.0}
+  ]
+}
