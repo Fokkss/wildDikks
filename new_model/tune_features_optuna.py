@@ -65,13 +65,19 @@ def split_chronological(
 
     return train_part, valid_part
 
+    # # I recommend forcing time features on.
+    # # If you want Optuna to decide, remove this line.
+    # flags["time"] = True
+
 
 def suggest_feature_flags(trial: optuna.Trial) -> dict[str, bool]:
     """
-    Tune feature groups, not every single column.
+    Tune mostly optional feature groups.
 
-    This is more stable and faster than brute-forcing all columns.
+    Core physical features are forced on to avoid invalid combinations like:
+    rotor_equivalent_wind=True but air_density=False.
     """
+
     flags = {}
 
     for feature_group in DEFAULT_FEATURE_FLAGS:
@@ -80,9 +86,16 @@ def suggest_feature_flags(trial: optuna.Trial) -> dict[str, bool]:
             [True, False],
         )
 
-    # I recommend forcing time features on.
-    # If you want Optuna to decide, remove this line.
+    # Core / dependency-safe features.
     flags["time"] = True
+    flags["availability"] = True
+    flags["power_curve"] = True
+    flags["air_density"] = True
+    flags["wind_power_density"] = True
+    flags["density_adjusted_power"] = True
+    flags["multi_height_power"] = True
+    flags["wind_shear"] = True
+    flags["ramp_zone_features"] = True
 
     return flags
 

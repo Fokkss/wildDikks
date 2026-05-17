@@ -42,8 +42,8 @@ COLUMN_RENAME_MAP = {
 
 
 DEFAULT_FEATURE_FLAGS = {
-    "time": True,
-    "availability": True,
+    "time": True, #false?
+    "availability": True, #fasle?
     "power_curve": True,
     "air_density": True,
     "wind_power_density": True,
@@ -53,19 +53,18 @@ DEFAULT_FEATURE_FLAGS = {
     "lags": True,
     "multi_height_power": True,
     "gust_features": True,
-
     "wind_shear": True,
     "wind_regime": True,
     "icing": True,
-
     "ramp_zone_features": True,
     "precipitation_stress": True,
     "time_interactions": True,
-
     "rotor_equivalent_wind": True,
     "yaw_misalignment": True,
     "moist_air_density": True,
-
+    "thermal_derating": True,
+    "boundary_layer_stability": True,
+    "momentum_flux": True,
 }
 
 
@@ -477,6 +476,316 @@ def _add_moist_air_density_features(
 
     return out
 
+def _temp_to_celsius_and_kelvin(temp: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """
+    Auto-detect temperature units and return (temp_c, temp_k).
+    """
+
+    temp = pd.to_numeric(temp, errors="coerce")
+    temp_median = temp.median(skipna=True)
+
+    if pd.notna(temp_median) and temp_median > 150:
+        temp_k = temp
+        temp_c = temp - 273.15
+    else:
+        temp_c = temp
+        temp_k = temp + 273.15
+
+    return temp_c, temp_k
+
+
+def _wind_components_from_speed_dir(
+    speed: pd.Series,
+    direction_raw: pd.Series,
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Simple wind-vector components from speed and direction.
+
+    Direction in your data is degrees / 1000, so 0.273 -> 273 degrees.
+    For feature engineering, exact meteorological u/v sign convention is
+    less important than stable vector differences between heights.
+    """
+
+    speed = pd.to_numeric(speed, errors="coerce")
+    direction_deg = _to_wind_dir_deg(direction_raw)
+    direction_rad = np.deg2rad(direction_deg)
+
+    u = speed * np.sin(direction_rad)
+    v = speed * np.cos(direction_rad)
+
+    return u, v
+
+
+def _add_boundary_layer_stability_features(
+    df: pd.DataFrame,
+    temp_col: str | None,
+    ws80_col: str | None,
+    ws120_col: str | None,
+    ws180_col: str | None,
+    datetime_col: str,
+) -> pd.DataFrame:
+    """
+    Boundary-layer stability / heat-flux proxy features.
+
+    Captures:
+    - bulk Richardson proxy between 80m and 120m;
+    - vertical wind-vector shear;
+    - stable night regime;
+    - convective daytime / heat-flux-like regime.
+
+    This is not exact meteorological heat flux. It is a robust proxy from
+    available columns: temperature, wind speeds, wind directions, cloud cover, time.
+    """
+
+    if temp_col is None or temp_col not in df.columns:
+        return df
+
+    if ws80_col is None or ws120_col is None:
+        return df
+
+    if ws80_col not in df.columns or ws120_col not in df.columns:
+        return df
+
+    out = df.copy()
+
+    temp80_raw = pd.to_numeric(out[temp_col], errors="coerce")
+    temp80_c, temp80_k = _temp_to_celsius_and_kelvin(temp80_raw)
+
+    if "temperature_120m" in out.columns:
+        temp120_raw = pd.to_numeric(out["temperature_120m"], errors="coerce")
+        temp120_c, temp120_k = _temp_to_celsius_and_kelvin(temp120_raw)
+    else:
+        temp120_c = pd.Series(np.nan, index=out.index)
+        temp120_k = pd.Series(np.nan, index=out.index)
+
+    ws80 = pd.to_numeric(out[ws80_col], errors="coerce")
+    ws120 = pd.to_numeric(out[ws120_col], errors="coerce")
+    ws180 = _numeric_series(out, ws180_col, default=np.nan)
+
+    dir80_col = _find_wind_direction_col(out, 80)
+    dir120_col = _find_wind_direction_col(out, 120)
+    dir180_col = _find_wind_direction_col(out, 180)
+
+    if dir80_col is not None and dir120_col is not None:
+        u80, v80 = _wind_components_from_speed_dir(ws80, out[dir80_col])
+        u120, v120 = _wind_components_from_speed_dir(ws120, out[dir120_col])
+        vector_shear_120_80 = np.sqrt((u120 - u80) ** 2 + (v120 - v80) ** 2)
+    else:
+        vector_shear_120_80 = (ws120 - ws80).abs()
+
+    if dir80_col is not None and dir180_col is not None and ws180_col is not None:
+        u80_for_180, v80_for_180 = _wind_components_from_speed_dir(ws80, out[dir80_col])
+        u180, v180 = _wind_components_from_speed_dir(ws180, out[dir180_col])
+        vector_shear_180_80 = np.sqrt((u180 - u80_for_180) ** 2 + (v180 - v80_for_180) ** 2)
+    else:
+        vector_shear_180_80 = (ws180 - ws80).abs()
+
+    dz_120_80 = 40.0
+    g = 9.80665
+    eps = 1e-4
+
+    delta_temp_120_80 = temp120_c - temp80_c
+
+    # Bulk Richardson proxy:
+    # positive -> more stable;
+    # negative -> more convective / unstable;
+    # near zero -> neutral-ish.
+    ri_120_80 = (
+        (g / (temp80_k + 1e-6))
+        * delta_temp_120_80
+        * dz_120_80
+        / ((vector_shear_120_80 ** 2) + eps)
+    )
+
+    out["temp_gradient_120_80_c"] = delta_temp_120_80
+    out["abs_temp_gradient_120_80_c"] = delta_temp_120_80.abs()
+
+    out["wind_vector_shear_120_80"] = vector_shear_120_80
+    out["wind_vector_shear_180_80"] = vector_shear_180_80
+    out["wind_vector_shear_120_80_sq"] = vector_shear_120_80 ** 2
+
+    # clip, чтобы одиночные почти нулевые shear не создавали безумные значения
+    out["bulk_richardson_120_80_proxy"] = ri_120_80.clip(-10.0, 10.0)
+    out["abs_bulk_richardson_120_80_proxy"] = out["bulk_richardson_120_80_proxy"].abs()
+
+    out["is_unstable_layer_120_80"] = (ri_120_80 < -0.03).astype(float)
+    out["is_neutral_layer_120_80"] = (ri_120_80.abs() <= 0.05).astype(float)
+    out["is_stable_layer_120_80"] = (ri_120_80 > 0.05).astype(float)
+    out["is_very_stable_layer_120_80"] = (ri_120_80 > 0.25).astype(float)
+
+    # Time / cloud proxies for heat flux.
+    if datetime_col in out.columns:
+        dt = pd.to_datetime(out[datetime_col], errors="coerce")
+        hour = dt.dt.hour
+        month = dt.dt.month
+    elif "hour_of_day" in out.columns:
+        hour = pd.to_numeric(out["hour_of_day"], errors="coerce")
+        month = pd.Series(np.nan, index=out.index)
+    else:
+        hour = pd.Series(np.nan, index=out.index)
+        month = pd.Series(np.nan, index=out.index)
+
+    if "cloud_cover_low" in out.columns:
+        cloud_low = _normalize_cloud_fraction(out["cloud_cover_low"])
+    else:
+        cloud_low = pd.Series(0.0, index=out.index)
+
+    daylight_proxy = ((hour >= 8) & (hour <= 18)).astype(float)
+    night_proxy = ((hour <= 6) | (hour >= 20)).astype(float)
+    clear_sky_proxy = (1.0 - cloud_low).clip(0.0, 1.0)
+    warm_season_proxy = month.isin([4, 5, 6, 7, 8, 9]).astype(float)
+
+    temp_above_10 = (temp80_c - 10.0).clip(lower=0.0)
+    temp_above_20 = (temp80_c - 20.0).clip(lower=0.0)
+
+    out["daylight_proxy"] = daylight_proxy
+    out["night_proxy"] = night_proxy
+    out["clear_sky_proxy"] = clear_sky_proxy
+    out["warm_season_proxy"] = warm_season_proxy
+
+    # Heat-flux-like proxy: warm + daytime + clear sky -> convection/mixing.
+    out["convective_heat_flux_proxy"] = (
+        daylight_proxy
+        * clear_sky_proxy
+        * (1.0 + 0.2 * warm_season_proxy)
+        * np.log1p(temp_above_10)
+    )
+
+    out["strong_convective_heat_flux_proxy"] = (
+        daylight_proxy
+        * clear_sky_proxy
+        * np.log1p(temp_above_20)
+    )
+
+    # Stable nocturnal boundary layer: clear night + weak wind + positive Ri.
+    out["stable_night_proxy"] = (
+        night_proxy
+        * clear_sky_proxy
+        * (ws80 < 6.0).astype(float)
+        * (ri_120_80 > 0.05).astype(float)
+    )
+
+    out["very_stable_night_proxy"] = (
+        night_proxy
+        * clear_sky_proxy
+        * (ws80 < 4.0).astype(float)
+        * (ri_120_80 > 0.25).astype(float)
+    )
+
+    out["stable_night_x_shear"] = out["stable_night_proxy"] * vector_shear_120_80
+    out["stable_night_x_ws120"] = out["stable_night_proxy"] * ws120
+
+    out["convective_x_shear_120_80"] = (
+        out["convective_heat_flux_proxy"] * vector_shear_120_80
+    )
+    out["convective_x_ws120"] = out["convective_heat_flux_proxy"] * ws120
+
+    if "expected_power_proxy_120m" in out.columns:
+        out["stable_night_x_expected_power_120m"] = (
+            out["stable_night_proxy"] * out["expected_power_proxy_120m"]
+        )
+        out["convective_x_expected_power_120m"] = (
+            out["convective_heat_flux_proxy"] * out["expected_power_proxy_120m"]
+        )
+
+    if "expected_power_proxy_rews" in out.columns:
+        out["stable_night_x_expected_power_rews"] = (
+            out["stable_night_proxy"] * out["expected_power_proxy_rews"]
+        )
+        out["convective_x_expected_power_rews"] = (
+            out["convective_heat_flux_proxy"] * out["expected_power_proxy_rews"]
+        )
+
+    return out
+
+
+def _add_momentum_flux_features(
+    df: pd.DataFrame,
+    ws10_col: str | None,
+    ws80_col: str | None,
+    ws120_col: str | None,
+    ws180_col: str | None,
+) -> pd.DataFrame:
+    """
+    Momentum / dynamic-pressure features.
+
+    Physicist's idea: rho * v may help if v^3 helped.
+
+    Adds:
+    - rho * v: momentum per volume proxy;
+    - rho * v^2: momentum flux / pressure-like proxy;
+    - 0.5 * rho * v^2: dynamic pressure;
+    - interactions with power curve / regimes.
+
+    Does not replace wind_power_density = 0.5 * rho * v^3.
+    """
+
+    out = df.copy()
+
+    # Prefer moist density if available, otherwise dry density.
+    if "moist_air_density" in out.columns:
+        rho = pd.to_numeric(out["moist_air_density"], errors="coerce")
+        rho_name = "moist"
+    elif "air_density" in out.columns:
+        rho = pd.to_numeric(out["air_density"], errors="coerce")
+        rho_name = "dry"
+    else:
+        return out
+
+    speed_sources = [
+        ("10m", ws10_col, None),
+        ("80m", ws80_col, "power_curve_proxy"),
+        ("120m", ws120_col, "power_curve_proxy_120m"),
+        ("180m", ws180_col, "power_curve_proxy_180m"),
+    ]
+
+    for label, col, power_curve_col in speed_sources:
+        if col is None or col not in out.columns:
+            continue
+
+        ws = pd.to_numeric(out[col], errors="coerce")
+        prefix = f"momentum_{label}"
+
+        out[f"{prefix}_rho_v_{rho_name}"] = rho * ws
+        out[f"{prefix}_rho_v2_{rho_name}"] = rho * (ws ** 2)
+        out[f"{prefix}_dynamic_pressure_{rho_name}"] = 0.5 * rho * (ws ** 2)
+
+        out[f"{prefix}_rho_v2_ramp_{rho_name}"] = (
+            out[f"{prefix}_rho_v2_{rho_name}"]
+            * ((ws >= 3.0) & (ws < 12.0)).astype(float)
+        )
+
+        out[f"{prefix}_rho_v2_rated_{rho_name}"] = (
+            out[f"{prefix}_rho_v2_{rho_name}"]
+            * ((ws >= 12.0) & (ws < 25.0)).astype(float)
+        )
+
+        if power_curve_col is not None and power_curve_col in out.columns:
+            out[f"{prefix}_dynamic_pressure_x_power_curve_{rho_name}"] = (
+                out[f"{prefix}_dynamic_pressure_{rho_name}"]
+                * out[power_curve_col]
+            )
+
+    if "rotor_equiv_ws" in out.columns:
+        rews = pd.to_numeric(out["rotor_equiv_ws"], errors="coerce")
+
+        out[f"momentum_rews_rho_v_{rho_name}"] = rho * rews
+        out[f"momentum_rews_rho_v2_{rho_name}"] = rho * (rews ** 2)
+        out[f"momentum_rews_dynamic_pressure_{rho_name}"] = 0.5 * rho * (rews ** 2)
+
+        if "power_curve_proxy_rews" in out.columns:
+            out[f"momentum_rews_dynamic_pressure_x_power_curve_{rho_name}"] = (
+                out[f"momentum_rews_dynamic_pressure_{rho_name}"]
+                * out["power_curve_proxy_rews"]
+            )
+
+    if "wind_vector_shear_120_80" in out.columns:
+        shear = pd.to_numeric(out["wind_vector_shear_120_80"], errors="coerce")
+
+        out[f"momentum_shear_120_80_rho_dv_{rho_name}"] = rho * shear
+        out[f"momentum_shear_120_80_rho_dv2_{rho_name}"] = rho * (shear ** 2)
+
+    return out
 
 def _to_wind_dir_deg(raw: pd.Series) -> pd.Series:
     raw = pd.to_numeric(raw, errors="coerce")
@@ -816,6 +1125,132 @@ def _add_past_window_sum_features(
         ).sum()
 
         out[f"{prefix}_sum_prev_{window_h}h"] = dt.map(rolling_sum)
+
+    return out
+
+
+def _add_thermal_derating_features(
+    df: pd.DataFrame,
+    temp_col: str | None,
+    ws80_col: str | None,
+    ws120_col: str | None,
+    ws180_col: str | None,
+) -> pd.DataFrame:
+    """
+    Transformer / electrical equipment high-temperature derating proxy.
+
+    Идея:
+    - высокая температура сама по себе не обязательно проблема;
+    - проблема = высокая температура + высокая ожидаемая мощность / нагрузка;
+    - добавляем proxy-фичи, но не вычитаем руками из прогноза.
+    """
+
+    if temp_col is None or temp_col not in df.columns:
+        return df
+
+    out = df.copy()
+
+    temp = pd.to_numeric(out[temp_col], errors="coerce")
+    temp_median = temp.median(skipna=True)
+
+    # C / K auto-detect
+    if pd.notna(temp_median) and temp_median > 150:
+        temp_c = temp - 273.15
+    else:
+        temp_c = temp
+
+    ws80 = _numeric_series(out, ws80_col, default=np.nan)
+    ws120 = _numeric_series(out, ws120_col, default=np.nan)
+    ws180 = _numeric_series(out, ws180_col, default=np.nan)
+
+    # Температурные пороги: лучше дать модели несколько ступеней.
+    out["temp_c_inferred"] = temp_c
+    out["temp_above_20c"] = (temp_c - 20.0).clip(lower=0.0)
+    out["temp_above_25c"] = (temp_c - 25.0).clip(lower=0.0)
+    out["temp_above_30c"] = (temp_c - 30.0).clip(lower=0.0)
+    out["temp_above_35c"] = (temp_c - 35.0).clip(lower=0.0)
+
+    out["is_hot_25c"] = (temp_c >= 25.0).astype(float)
+    out["is_hot_30c"] = (temp_c >= 30.0).astype(float)
+    out["is_hot_35c"] = (temp_c >= 35.0).astype(float)
+
+    # Нагрузка: лучше брать физический proxy мощности, а не просто wind speed.
+    if "available_capacity_mw" in out.columns:
+        capacity = out["available_capacity_mw"]
+    else:
+        capacity = pd.Series(INSTALLED_CAPACITY_MW, index=out.index)
+
+    candidate_power_cols = [
+        "expected_power_proxy_rews",
+        "expected_power_proxy_120m",
+        "expected_power_proxy",
+        "expected_power_density_adj_rews",
+        "expected_power_density_adj",
+    ]
+
+    load_proxy = pd.Series(np.nan, index=out.index)
+
+    for col in candidate_power_cols:
+        if col in out.columns:
+            current = pd.to_numeric(out[col], errors="coerce")
+            load_proxy = load_proxy.fillna(current)
+
+    # fallback, если power proxies почему-то ещё не созданы
+    if load_proxy.isna().all():
+        load_proxy = ((ws120.clip(3.0, 12.0) - 3.0) / 9.0) ** 3
+        load_proxy = load_proxy.clip(0.0, 1.0) * capacity
+
+    load_ratio = (load_proxy / (capacity + 1e-6)).clip(0.0, 1.5)
+
+    out["thermal_load_proxy_mw"] = load_proxy
+    out["thermal_load_ratio_proxy"] = load_ratio
+
+    # Электрические потери ближе к load^2, поэтому даём и квадрат.
+    out["thermal_load_ratio_sq"] = load_ratio ** 2
+
+    # Главные interaction-фичи.
+    out["hot25_x_load_ratio"] = out["temp_above_25c"] * load_ratio
+    out["hot30_x_load_ratio"] = out["temp_above_30c"] * load_ratio
+    out["hot35_x_load_ratio"] = out["temp_above_35c"] * load_ratio
+
+    out["hot25_x_load_ratio_sq"] = out["temp_above_25c"] * (load_ratio ** 2)
+    out["hot30_x_load_ratio_sq"] = out["temp_above_30c"] * (load_ratio ** 2)
+    out["hot35_x_load_ratio_sq"] = out["temp_above_35c"] * (load_ratio ** 2)
+
+    # Режим: жарко и модель ожидает высокую генерацию.
+    out["is_hot_and_high_load"] = (
+        (temp_c >= 30.0) & (load_ratio >= 0.70)
+    ).astype(float)
+
+    out["is_very_hot_and_high_load"] = (
+        (temp_c >= 35.0) & (load_ratio >= 0.70)
+    ).astype(float)
+
+    # Через ветер: при слабом ветре жара не так важна, при rated-zone важна.
+    out["hot30_x_ws80_cube"] = out["temp_above_30c"] * (ws80 ** 3)
+    out["hot30_x_ws120_cube"] = out["temp_above_30c"] * (ws120 ** 3)
+    out["hot30_x_ws180_cube"] = out["temp_above_30c"] * (ws180 ** 3)
+
+    out["hot30_x_rated_80m"] = (
+        out["temp_above_30c"]
+        * ((ws80 >= 12.0) & (ws80 < 25.0)).astype(float)
+    )
+
+    out["hot30_x_rated_120m"] = (
+        out["temp_above_30c"]
+        * ((ws120 >= 12.0) & (ws120 < 25.0)).astype(float)
+    )
+
+    # Возможное охлаждение ветром у наружного оборудования:
+    # даём модели понять, что жарко + штиль отличается от жарко + ветер.
+    ws10_col = _find_wind_speed_col(out, 10)
+    ws10 = _numeric_series(out, ws10_col, default=np.nan)
+
+    out["hot30_x_low_cooling_wind10"] = (
+        out["temp_above_30c"] * (ws10 < 3.0).astype(float)
+    )
+
+    out["hot30_x_cooling_wind10"] = out["temp_above_30c"] * ws10
 
     return out
 
@@ -1241,11 +1676,11 @@ class ModelPreprocessor:
                 df["wind_power_density_rews"] = (
                         0.5 * df["air_density"] * df["rotor_equiv_ws_cube"]
                 )
-            if "expected_power_proxy_rews" in df.columns:
+            if "expected_power_proxy_rews" in df.columns and "air_density" in df.columns:
                 df["expected_power_density_adj_rews"] = (
-                    df["expected_power_proxy_rews"]
-                    * df["air_density"]
-                    / STANDARD_AIR_DENSITY
+                        df["expected_power_proxy_rews"]
+                        * df["air_density"]
+                        / STANDARD_AIR_DENSITY
                 )
 
         # ------------------------------------------------------------
@@ -1256,6 +1691,30 @@ class ModelPreprocessor:
                 df=df,
                 temp_col=temp_col,
                 pressure_col=pressure_col,
+            )
+        # ------------------------------------------------------------
+        # 4.08 Boundary-layer stability / heat-flux proxy
+        # ------------------------------------------------------------
+        if self._flag("boundary_layer_stability"):
+            df = _add_boundary_layer_stability_features(
+                df=df,
+                temp_col=temp_col,
+                ws80_col=ws80_col,
+                ws120_col=ws120_col,
+                ws180_col=ws180_col,
+                datetime_col=self.datetime_col,
+            )
+
+        # ------------------------------------------------------------
+        # 4.09 Momentum / dynamic-pressure proxy
+        # ------------------------------------------------------------
+        if self._flag("momentum_flux"):
+            df = _add_momentum_flux_features(
+                df=df,
+                ws10_col=ws10_col,
+                ws80_col=ws80_col,
+                ws120_col=ws120_col,
+                ws180_col=ws180_col,
             )
 
         # ------------------------------------------------------------
@@ -1428,6 +1887,18 @@ class ModelPreprocessor:
                     df["expected_power_proxy"]
                     * df["air_density"]
                     / STANDARD_AIR_DENSITY
+            )
+
+        # ------------------------------------------------------------
+        # 6.1 Transformer / electrical equipment thermal derating
+        # ------------------------------------------------------------
+        if self._flag("thermal_derating"):
+            df = _add_thermal_derating_features(
+                df=df,
+                temp_col=temp_col,
+                ws80_col=ws80_col,
+                ws120_col=ws120_col,
+                ws180_col=ws180_col,
             )
 
         # ------------------------------------------------------------
