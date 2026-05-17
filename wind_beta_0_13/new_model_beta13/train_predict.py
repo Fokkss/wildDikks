@@ -190,9 +190,9 @@ def rule_delta(valid_raw: pd.DataFrame, base_pred: np.ndarray, strength: float) 
     d += (col("dir315_360") > 0.5) * (+0.08)
     d += (col("cloud_hi") > 0.5) * (-0.16)
     d += (col("pressure_low") > 0.5) * (+0.18)
-    d += (col("pressure_midlow") > 0.5) * (-0.12)
-    d += (col("temp_gt5") > 0.5) * (+0.12)
-    d += (col("ws5_7") > 0.5) * (+0.12)
+    d += (col("pressure_midlow") > 0.5) * (-0.13)
+    d += (col("temp_gt5") > 0.5) * (+0.13)
+    d += (col("ws5_7") > 0.5) * (+0.13)
     d += ((col("ws0_3") > 0.5) & (pred < 15.0)) * (+0.08)
     # Use positive 180-80 shear if present; q-based threshold was unstable in some folds.
     d += ((col("ws_diff_180_80") > 0.05) & (pred >= 50.0) & (pred < 70.0)) * (+0.75)
@@ -236,7 +236,7 @@ def profile_delta(valid_raw: pd.DataFrame, base_pred: np.ndarray, profile: str) 
 
     if profile in ("physics", "physics_strong", "physics_xstrong", "physics_ultra", "physics_plus_dir_tiny", "theory103", "density_boost", "all_mild", "all_strong"):
         # Stability / density / ramp profile. Beta08 best was physics-only,
-        # so beta12 line-searches around this vector.
+        # so beta13 line-searches around this vector.
         if profile == "physics_strong":
             scale = 1.35
         elif profile == "physics_xstrong":
@@ -301,9 +301,9 @@ def main() -> None:
     p.add_argument("--valid_path", required=True)
     p.add_argument("--target", required=True)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--artifact_dir", default="artifacts_beta12")
-    p.add_argument("--submission_dir", default="submissions_beta12")
-    p.add_argument("--report_dir", default="reports_beta12")
+    p.add_argument("--artifact_dir", default="artifacts_beta13")
+    p.add_argument("--submission_dir", default="submissions_beta13")
+    p.add_argument("--report_dir", default="reports_beta13")
     args = p.parse_args()
     set_seed(args.seed)
     art_dir = Path(args.artifact_dir); out_dir = Path(args.submission_dir); rep_dir = Path(args.report_dir)
@@ -365,7 +365,7 @@ def main() -> None:
     # anchor_1700_d4_w70 + rules55 + bias0.75 + physics_strong -> 8.3960.
     # First wave is only 8 candidates because submissions are slow.
     candidate_specs = [
-        # beta12 first wave: tight around beta10 production-best
+        # beta13 first wave: tight around beta10 production-best
         # beta10 best: anchor_1700_d4_w70 + rules55 + bias0.75 + physics_strong -> 8.3960
         ("anchor_1700_d4_w70", 0.55, 0.78, "physics_strong"),
         ("anchor_1700_d4_w70", 0.55, 0.72, "physics_strong"),
@@ -389,18 +389,18 @@ def main() -> None:
         base = ensembles[ens_name]
         pred = base + rule_delta(valid_raw, base, rules_strength) + profile_delta(valid_raw, base, profile) + bias
         prof_suffix = "" if profile == "none" else f"_{profile}"
-        fname = f"beta12_{ens_name}_rules{int(rules_strength*100):02d}_bias{str(bias).replace('.', 'p')}{prof_suffix}.csv"
+        fname = f"beta13_{ens_name}_rules{int(rules_strength*100):02d}_bias{str(bias).replace('.', 'p')}{prof_suffix}.csv"
         save_candidate(fname, pred, valid_raw, out_dir, rep_dir, submit_first, {"ensemble": ens_name, "rules_strength": rules_strength, "bias": bias, "profile": profile})
 
     # Also save raw anchor for diagnostics, but do not put all of them into submit_first.
     for ens_name in ["anchor_1700_d4_w70", "anchor_1700_d4_w75", "anchor_1700_d4_w80", "anchor_balanced"]:
         pred = ensembles[ens_name]
-        fname = f"beta12_{ens_name}_raw.csv"
+        fname = f"beta13_{ens_name}_raw.csv"
         save_candidate(fname, pred, valid_raw, out_dir, rep_dir, [], {"ensemble": ens_name, "rules_strength": 0.0, "bias": 0.0})
 
     (out_dir / "SUBMIT_FIRST.txt").write_text("\n".join(submit_first[:8]) + "\n", encoding="utf-8")
     (out_dir / "SUBMIT_SECOND.txt").write_text("\n".join(submit_first[8:]) + "\n", encoding="utf-8")
-    (art_dir / "beta12_model_meta.json").write_text(json.dumps({"target_col": target_col, "models": metas, "ensembles": list(ensembles)}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (art_dir / "beta13_model_meta.json").write_text(json.dumps({"target_col": target_col, "models": metas, "ensembles": list(ensembles)}, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("Generated candidates:")
     for s in submit_first:

@@ -114,7 +114,7 @@ beta 0.4–0.6: bias/rules/ensemble sweeps; mixed results.
 beta 0.7: anchor_1700 + depth4 blend, w75, bias/rules; improved to ~8.42.
 beta 0.8–0.9: physics profiles and line-search; improved to ~8.41.
 beta 0.10: w70 + rules55 + bias0.75 + physics_strong; improved to ~8.396.
-beta 0.12: narrow coordinate search around beta 0.10 best plus optional CatBoost companion.
+beta 0.13: narrow coordinate search around beta 0.10 best plus optional CatBoost companion.
 ```
 
 ## 7. Current model design
@@ -146,7 +146,7 @@ This is not ideal in a pure scientific sense, but it is self-contained: it uses 
 
 ## 8. Next planned steps
 
-1. Run beta 0.12 first wave around the current best.
+1. Run beta 0.13 first wave around the current best.
 2. If it improves, run the second wave.
 3. If it stalls, run optional CatBoost companion and submit only the 4–5 blends listed by `SUBMIT_CATBOOST.txt`.
 4. For final packaging, keep production profile as default and mention the 8.01 calibrated artifact only as diagnostic evidence, not as the production solution.

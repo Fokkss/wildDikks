@@ -27,8 +27,8 @@ def load_pred_from_artifact(artifact_path: Path, raw: pd.DataFrame) -> np.ndarra
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--features_path", required=True)
-    p.add_argument("--artifact_dir", default="artifacts_beta12")
-    p.add_argument("--output_path", default="submissions_beta12/submission_2027_beta12_production.csv")
+    p.add_argument("--artifact_dir", default="artifacts_beta13")
+    p.add_argument("--output_path", default="submissions_beta13/submission_2027_beta13_production.csv")
     p.add_argument("--profile", default="anchor_1700_d4_w70")
     p.add_argument("--rules_strength", type=float, default=0.55)
     p.add_argument("--bias", type=float, default=0.75)

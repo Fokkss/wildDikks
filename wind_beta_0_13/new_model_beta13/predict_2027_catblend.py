@@ -31,12 +31,12 @@ def load_cat_pred(artifact_path: Path, raw: pd.DataFrame) -> np.ndarray:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument('--features_path', required=True)
-    p.add_argument('--artifact_dir', default='artifacts_beta12')
-    p.add_argument('--output_path', default='submissions_beta12/submission_2027_beta12_catblend.csv')
-    p.add_argument('--anchor_weight', type=float, default=0.75)
+    p.add_argument('--artifact_dir', default='artifacts_beta13')
+    p.add_argument('--output_path', default='submissions_beta13/submission_2027_beta13_catblend.csv')
+    p.add_argument('--anchor_weight', type=float, default=0.60)
     p.add_argument('--anchor_profile', default='anchor70', choices=['anchor70', 'anchor68'])
     p.add_argument('--rules_strength', type=float, default=0.55)
-    p.add_argument('--bias', type=float, default=0.75)
+    p.add_argument('--bias', type=float, default=0.60)
     p.add_argument('--extra_profile', default='physics_strong', choices=['none', 'dircloud', 'physics', 'physics_strong', 'physics_xstrong', 'physics_ultra', 'physics_plus_dir_tiny', 'theory103', 'density_boost', 'all_mild', 'all_strong', 'lowrelax'])
     args = p.parse_args()
 

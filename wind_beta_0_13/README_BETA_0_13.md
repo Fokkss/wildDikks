@@ -1,4 +1,4 @@
-# Wind farm generation forecast — beta 0.12
+# Wind farm generation forecast — beta 0.13
 
 Self-contained production pipeline for hourly wind-farm generation forecasting.
 
@@ -9,7 +9,7 @@ The current production family is based on a compact XGBoost ensemble with physic
 From this folder:
 
 ```bash
-bash scripts_beta12/run_beta12_train_predict.sh \
+bash scripts_beta13/run_beta13_train_predict.sh \
   ../data/train_dataset.csv \
   ../data/valid_features.csv \
   "Выработка. Результирующий расчет"
@@ -18,32 +18,32 @@ bash scripts_beta12/run_beta12_train_predict.sh \
 The script creates:
 
 ```text
-artifacts_beta12/      trained models and metadata
-submissions_beta12/    candidate submissions with `prediction` header
-reports_beta12/        summary JSONs for every candidate
+artifacts_beta13/      trained models and metadata
+submissions_beta13/    candidate submissions with `prediction` header
+reports_beta13/        summary JSONs for every candidate
 ```
 
 Submit only the files listed in:
 
 ```bash
-cat submissions_beta12/SUBMIT_FIRST.txt
+cat submissions_beta13/SUBMIT_FIRST.txt
 ```
 
 If one of the first-wave files beats the current best, submit:
 
 ```bash
-cat submissions_beta12/SUBMIT_SECOND.txt
+cat submissions_beta13/SUBMIT_SECOND.txt
 ```
 
 ## Current production anchor
 
-The best production-only candidate before beta 0.12:
+The best production-only candidate before beta 0.13:
 
 ```text
 beta10_anchor_1700_d4_w70_rules55_bias0p75_physics_strong.csv — 8.3960
 ```
 
-Beta 0.12 performs a very narrow coordinate search around this profile:
+Beta 0.13 performs a very narrow coordinate search around this profile:
 
 ```text
 ensemble       = anchor_1700_d4_w70
@@ -57,9 +57,9 @@ profile        = physics_strong / physics_xstrong / density_boost / physics_plus
 After training:
 
 ```bash
-bash scripts_beta12/run_beta12_predict_2027.sh \
+bash scripts_beta13/run_beta13_predict_2027.sh \
   ../data/features_2027.csv \
-  submissions_beta12/submission_2027_beta12_production.csv \
+  submissions_beta13/submission_2027_beta13_production.csv \
   anchor_1700_d4_w70 \
   0.55 \
   0.75 \
@@ -78,7 +78,7 @@ prediction
 Use only if XGBoost coordinate search stops improving and there is enough time:
 
 ```bash
-bash scripts_beta12/run_beta12_catboost_companion.sh \
+bash scripts_beta13/run_beta13_catboost_companion.sh \
   ../data/train_dataset.csv \
   ../data/valid_features.csv \
   "Выработка. Результирующий расчет"
@@ -87,7 +87,7 @@ bash scripts_beta12/run_beta12_catboost_companion.sh \
 Then submit only:
 
 ```bash
-cat submissions_beta12_cat/SUBMIT_CATBOOST.txt
+cat submissions_beta13_cat/SUBMIT_CATBOOST.txt
 ```
 
 This is a companion/blend test, not the default production path.
@@ -95,9 +95,9 @@ This is a companion/blend test, not the default production path.
 ## Main modules
 
 ```text
-new_model_beta12/feature_engineering.py  schema-tolerant physics features
-new_model_beta12/train_predict.py        train XGBoost ensemble and candidates
-new_model_beta12/predict_2027.py         inference from saved artifacts
-new_model_beta12/catboost_companion.py   optional CatBoost companion model
+new_model_beta13/feature_engineering.py  schema-tolerant physics features
+new_model_beta13/train_predict.py        train XGBoost ensemble and candidates
+new_model_beta13/predict_2027.py         inference from saved artifacts
+new_model_beta13/catboost_companion.py   optional CatBoost companion model
 ```
 

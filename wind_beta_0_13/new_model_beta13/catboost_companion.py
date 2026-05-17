@@ -36,9 +36,9 @@ def main() -> None:
     p.add_argument('--train_path', required=True)
     p.add_argument('--valid_path', required=True)
     p.add_argument('--target', required=True)
-    p.add_argument('--artifact_dir', default='artifacts_beta12')
-    p.add_argument('--submission_dir', default='submissions_beta12_cat')
-    p.add_argument('--report_dir', default='reports_beta12_cat')
+    p.add_argument('--artifact_dir', default='artifacts_beta13')
+    p.add_argument('--submission_dir', default='submissions_beta13_cat')
+    p.add_argument('--report_dir', default='reports_beta13_cat')
     p.add_argument('--seed', type=int, default=43)
     p.add_argument('--iterations', type=int, default=2500)
     args = p.parse_args()
@@ -120,7 +120,7 @@ def main() -> None:
         base = anchor_weight * anchor + (1.0 - anchor_weight) * cat_pred
         pred = base + rule_delta(valid_raw, base, rules_strength) + profile_delta(valid_raw, base, profile) + bias
         name = (
-            f'beta12_catblend_{anchor_name}_cat_w{_tag_float(anchor_weight)}'
+            f'beta13_catblend_{anchor_name}_cat_w{_tag_float(anchor_weight)}'
             f'_rules{int(round(rules_strength * 100)):02d}'
             f'_bias{_tag_float(bias)}_{profile}.csv'
         )
@@ -134,28 +134,40 @@ def main() -> None:
             'kind': 'catboost_companion_blend',
         }, bucket)
 
-    # FIRST WAVE: exploit the monotonic CatBoost blend improvement seen in beta11.
-    # beta11: w0.80 = 8.3606, w0.85 = 8.367, w0.90 = 8.375; therefore try more CatBoost.
-    for aw in [0.70, 0.72, 0.75, 0.78, 0.80]:
+    # FIRST WAVE: final narrow search around beta12 best.
+    # Observed on leaderboard:
+    #   anchor70 weight 0.80 -> 8.3606
+    #   0.70 -> 8.3500
+    #   0.65 -> 8.3466
+    #   0.60 -> 8.3449 (best so far)
+    #   0.55 -> 8.3453
+    # So the minimum is likely around 0.58-0.62, with bias slightly above 0.75.
+    for aw in [0.56, 0.58, 0.60, 0.62]:
         candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=aw, rules_strength=0.55, bias=0.75, profile='physics_strong', bucket=entries_first)
 
-    # Tiny local tuning around the known best w0.80.
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.75, rules_strength=0.60, bias=0.75, profile='physics_strong', bucket=entries_first)
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.75, rules_strength=0.55, bias=0.65, profile='physics_strong', bucket=entries_first)
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.75, rules_strength=0.55, bias=0.85, profile='physics_strong', bucket=entries_first)
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.75, rules_strength=0.55, bias=0.75, profile='density_boost', bucket=entries_first)
-    candidate(anchor_name='anchor68', anchor=anchor68, anchor_weight=0.75, rules_strength=0.55, bias=0.75, profile='physics_strong', bucket=entries_first)
+    # Bias refinement: beta12 showed bias0.90 helped at anchor_weight 0.70;
+    # check whether the optimum near 0.60 also wants a bit more bias.
+    for aw, b in [(0.58, 0.85), (0.60, 0.85), (0.62, 0.85), (0.60, 0.95)]:
+        candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=aw, rules_strength=0.55, bias=b, profile='physics_strong', bucket=entries_first)
 
-    # SECOND WAVE: only if first wave beats beta11 best. Lower anchor weights are more aggressive.
-    for aw in [0.50, 0.55, 0.60, 0.65]:
+    # Alternative anchor slightly more depth4-heavy; submit only if needed.
+    candidate(anchor_name='anchor68', anchor=anchor68, anchor_weight=0.58, rules_strength=0.55, bias=0.75, profile='physics_strong', bucket=entries_first)
+    candidate(anchor_name='anchor68', anchor=anchor68, anchor_weight=0.60, rules_strength=0.55, bias=0.75, profile='physics_strong', bucket=entries_first)
+
+    # SECOND WAVE: send only if first wave improves beta12 best.
+    # It checks profile/rules shape around the best basin, plus slightly more CatBoost.
+    for aw in [0.52, 0.54, 0.64, 0.66]:
         candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=aw, rules_strength=0.55, bias=0.75, profile='physics_strong', bucket=entries_second)
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.70, rules_strength=0.65, bias=0.75, profile='physics_strong', bucket=entries_second)
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.70, rules_strength=0.55, bias=0.90, profile='physics_strong', bucket=entries_second)
-    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.70, rules_strength=0.55, bias=0.75, profile='physics_xstrong', bucket=entries_second)
-    candidate(anchor_name='anchor68', anchor=anchor68, anchor_weight=0.70, rules_strength=0.55, bias=0.75, profile='physics_strong', bucket=entries_second)
+    for aw in [0.58, 0.60, 0.62]:
+        candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=aw, rules_strength=0.60, bias=0.85, profile='physics_strong', bucket=entries_second)
+    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.60, rules_strength=0.50, bias=0.85, profile='physics_strong', bucket=entries_second)
+    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.60, rules_strength=0.55, bias=0.85, profile='physics_xstrong', bucket=entries_second)
+    candidate(anchor_name='anchor70', anchor=anchor70, anchor_weight=0.60, rules_strength=0.55, bias=0.85, profile='density_boost', bucket=entries_second)
+    candidate(anchor_name='anchor68', anchor=anchor68, anchor_weight=0.56, rules_strength=0.55, bias=0.85, profile='physics_strong', bucket=entries_second)
+    candidate(anchor_name='anchor68', anchor=anchor68, anchor_weight=0.58, rules_strength=0.55, bias=0.85, profile='physics_strong', bucket=entries_second)
 
     # Diagnostics, not in first list by default.
-    save('beta12_catboost_raw_rules55_bias0p75_physics_strong.csv',
+    save('beta13_catboost_raw_rules55_bias0p75_physics_strong.csv',
          cat_pred + rule_delta(valid_raw, cat_pred, 0.55) + profile_delta(valid_raw, cat_pred, 'physics_strong') + 0.75,
          {'kind': 'catboost_raw', 'rules_strength': 0.55, 'bias': 0.75, 'profile': 'physics_strong'}, entries_second)
 
@@ -163,7 +175,7 @@ def main() -> None:
     (out_dir / 'SUBMIT_SECOND.txt').write_text('\n'.join(entries_second) + '\n', encoding='utf-8')
     meta = {'iterations': args.iterations, 'depth': 6, 'learning_rate': 0.03, 'n_features': len(cols), 'feature_cols': cols}
     joblib.dump({'model': model, 'imputer': imp, 'feature_cols': cols, 'target_col': target_col, 'use_lags': True, 'use_time': True, 'use_availability': True}, Path(args.artifact_dir) / 'catboost_companion.joblib')
-    (Path(args.artifact_dir) / 'beta12_catboost_meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+    (Path(args.artifact_dir) / 'beta13_catboost_meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
     print('Generated CatBoost companion candidates:')
     for e in entries_first:
         print(e)

@@ -14,7 +14,7 @@ The main physical corrections were built around wind turbine mechanics:
 
 A leaderboard diagnostic phase used tiny perturbation/probe submissions. It revealed stable bias patterns: mid/ramp zones were underpredicted, high tail was slightly overpredicted, and the strongest segment was high vertical shear combined with 50–70 MW base prediction. This produced a validation calibration artifact around 8.01, used only as diagnostic evidence.
 
-For production, we switched back to self-contained `train -> model -> predict`. The current beta 0.12 model is an XGBoost ensemble:
+For production, we switched back to self-contained `train -> model -> predict`. The current beta 0.13 model is an XGBoost ensemble:
 
 ```text
 anchor_1700_d4_w70 = 0.70 * legacy1700 + 0.30 * depth4_1892

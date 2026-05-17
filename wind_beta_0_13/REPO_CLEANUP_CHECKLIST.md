@@ -12,9 +12,9 @@ wind_beta_0_11/
   README.md
   WORK_LOG.md
   FOR_VAAS.md
-  new_model_beta12/
-  scripts_beta12/
-  configs_beta12/
+  new_model_beta13/
+  scripts_beta13/
+  configs_beta13/
 ```
 
 Do not commit:
