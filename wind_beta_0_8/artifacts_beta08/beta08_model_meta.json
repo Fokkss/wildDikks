@@ -63,8 +63,11 @@
     }
   },
   "ensembles": [
+    "anchor_1700_d4_w65",
+    "anchor_1700_d4_w70",
     "anchor_1700_d4_w75",
     "anchor_1700_d4_w80",
+    "anchor_1700_d4_w85",
     "anchor_1700_d4_nolag",
     "anchor_1700_q1_d4",
     "anchor_bag_legacy",

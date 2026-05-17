@@ -201,6 +201,49 @@ def rule_delta(valid_raw: pd.DataFrame, base_pred: np.ndarray, strength: float) 
     return d * strength
 
 
+
+def profile_delta(valid_raw: pd.DataFrame, base_pred: np.ndarray, profile: str) -> np.ndarray:
+    """Small deterministic production profiles learned from validation diagnostics.
+
+    These are not teacher-based; they use only forecast features and base predictions.
+    They are meant to be tiny line-search profiles around the production anchor.
+    """
+    fe = make_features(valid_raw, target_col=None, use_lags=True, use_time=True, use_availability=True)
+    pred = np.asarray(base_pred, dtype=float)
+    d = np.zeros(len(pred), dtype=float)
+
+    def col(name: str, default=0.0):
+        if name in fe.columns:
+            return pd.to_numeric(fe[name], errors="coerce").fillna(default).to_numpy()
+        return np.full(len(pred), default, dtype=float)
+
+    if profile in ("none", ""):
+        return d
+
+    if profile in ("dircloud", "all_mild", "all_strong"):
+        # Wake / terrain-like direction effect + cloudy high-overprediction effect.
+        scale = 1.0 if profile != "all_strong" else 1.25
+        d += (col("dir60_75") > 0.5) * (-0.16 * scale)
+        d += (col("dir45_90") > 0.5) * (-0.05 * scale)
+        d += (col("dir315_360") > 0.5) * (+0.05 * scale)
+        d += (col("cloud_hi") > 0.5) * (-0.08 * scale)
+
+    if profile in ("physics", "all_mild", "all_strong"):
+        # Stability / density / ramp profile.
+        scale = 1.0 if profile != "all_strong" else 1.20
+        d += (col("pressure_low") > 0.5) * (+0.10 * scale)
+        d += (col("pressure_midlow") > 0.5) * (-0.07 * scale)
+        d += (col("temp_gt5") > 0.5) * (+0.07 * scale)
+        d += (col("ws5_7") > 0.5) * (+0.07 * scale)
+        d += ((col("ws10_11") > 0.5) & (pred >= 45.0)) * (+0.06 * scale)
+        d += ((col("ws13p") > 0.5) & (pred > 65.0)) * (-0.05 * scale)
+
+    if profile in ("lowrelax", "all_mild", "all_strong"):
+        scale = 1.0 if profile != "all_strong" else 1.15
+        d += ((col("ws0_3") > 0.5) & (pred < 15.0)) * (+0.05 * scale)
+
+    return d
+
 def clip_pred(valid_raw: pd.DataFrame, pred: np.ndarray) -> np.ndarray:
     cap = np.minimum(available_capacity_from_raw(valid_raw).to_numpy(), FARM_CAPACITY_MW)
     return np.clip(pred, 0.0, cap)
@@ -229,9 +272,9 @@ def main() -> None:
     p.add_argument("--valid_path", required=True)
     p.add_argument("--target", required=True)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--artifact_dir", default="artifacts_beta07")
-    p.add_argument("--submission_dir", default="submissions_beta07")
-    p.add_argument("--report_dir", default="reports_beta07")
+    p.add_argument("--artifact_dir", default="artifacts_beta08")
+    p.add_argument("--submission_dir", default="submissions_beta08")
+    p.add_argument("--report_dir", default="reports_beta08")
     args = p.parse_args()
     set_seed(args.seed)
     art_dir = Path(args.artifact_dir); out_dir = Path(args.submission_dir); rep_dir = Path(args.report_dir)
@@ -269,8 +312,11 @@ def main() -> None:
 
     # Production ensembles. Names are explicit and stable.
     ensembles = {
+        "anchor_1700_d4_w65": 0.65*preds["legacy1700"] + 0.35*preds["depth4_1892"],
+        "anchor_1700_d4_w70": 0.70*preds["legacy1700"] + 0.30*preds["depth4_1892"],
         "anchor_1700_d4_w75": 0.75*preds["legacy1700"] + 0.25*preds["depth4_1892"],
         "anchor_1700_d4_w80": 0.80*preds["legacy1700"] + 0.20*preds["depth4_1892"],
+        "anchor_1700_d4_w85": 0.85*preds["legacy1700"] + 0.15*preds["depth4_1892"],
         "anchor_1700_d4_nolag": 0.70*preds["legacy1700"] + 0.20*preds["depth4_1892"] + 0.10*preds["nolags1700"],
         "anchor_1700_q1_d4": 0.65*preds["legacy1700"] + 0.20*preds["q1recent1700"] + 0.15*preds["depth4_1892"],
         "anchor_bag_legacy": 0.45*preds["legacy1700"] + 0.35*preds["legacy1892"] + 0.20*preds["legacy2500"],
@@ -278,36 +324,44 @@ def main() -> None:
     }
 
     submit_first: list[str] = []
-    # Few high-probability candidates only.
+    # Narrow search around the confirmed beta07 best:
+    # anchor_1700_d4_w75 + rules45 + bias0.70 -> 8.4207.
+    # Keep first wave small because each submission is slow.
     candidate_specs = [
-        ("anchor_1700_d4_w75", 0.45, 0.45),
-        ("anchor_1700_d4_w75", 0.45, 0.55),
-        ("anchor_1700_d4_w75", 0.45, 0.70),
-        ("anchor_1700_d4_w80", 0.45, 0.50),
-        ("anchor_1700_d4_w80", 0.35, 0.50),
-        ("anchor_1700_d4_nolag", 0.45, 0.50),
-        ("anchor_1700_q1_d4", 0.45, 0.50),
-        ("anchor_balanced", 0.45, 0.50),
-        # only if user has more attempts
-        ("anchor_bag_legacy", 0.45, 0.50),
-        ("anchor_1700_d4_w75", 0.60, 0.50),
-        ("anchor_1700_d4_w75", 0.25, 0.50),
+        # first wave: only highest-probability line-search around bias/rules/weight
+        ("anchor_1700_d4_w75", 0.45, 0.80, "none"),
+        ("anchor_1700_d4_w75", 0.45, 0.90, "none"),
+        ("anchor_1700_d4_w75", 0.45, 1.00, "none"),
+        ("anchor_1700_d4_w75", 0.55, 0.80, "none"),
+        ("anchor_1700_d4_w75", 0.60, 0.75, "none"),
+        ("anchor_1700_d4_w70", 0.45, 0.80, "none"),
+        ("anchor_1700_d4_w70", 0.60, 0.80, "none"),
+        ("anchor_1700_d4_w80", 0.45, 0.80, "none"),
+        # second wave: profile deltas only if first wave improves
+        ("anchor_1700_d4_w75", 0.45, 0.75, "dircloud"),
+        ("anchor_1700_d4_w75", 0.45, 0.75, "physics"),
+        ("anchor_1700_d4_w75", 0.45, 0.70, "all_mild"),
+        ("anchor_1700_d4_w75", 0.55, 0.70, "all_mild"),
+        ("anchor_1700_d4_w70", 0.45, 0.75, "all_mild"),
+        ("anchor_1700_d4_w65", 0.45, 0.80, "none"),
+        ("anchor_1700_d4_w85", 0.45, 0.80, "none"),
     ]
-    for ens_name, rules_strength, bias in candidate_specs:
+    for ens_name, rules_strength, bias, profile in candidate_specs:
         base = ensembles[ens_name]
-        pred = base + rule_delta(valid_raw, base, rules_strength) + bias
-        fname = f"beta07_{ens_name}_rules{int(rules_strength*100):02d}_bias{str(bias).replace('.', 'p')}.csv"
-        save_candidate(fname, pred, valid_raw, out_dir, rep_dir, submit_first, {"ensemble": ens_name, "rules_strength": rules_strength, "bias": bias})
+        pred = base + rule_delta(valid_raw, base, rules_strength) + profile_delta(valid_raw, base, profile) + bias
+        prof_suffix = "" if profile == "none" else f"_{profile}"
+        fname = f"beta08_{ens_name}_rules{int(rules_strength*100):02d}_bias{str(bias).replace('.', 'p')}{prof_suffix}.csv"
+        save_candidate(fname, pred, valid_raw, out_dir, rep_dir, submit_first, {"ensemble": ens_name, "rules_strength": rules_strength, "bias": bias, "profile": profile})
 
     # Also save raw anchor for diagnostics, but do not put all of them into submit_first.
-    for ens_name in ["anchor_1700_d4_w75", "anchor_1700_d4_w80", "anchor_balanced"]:
+    for ens_name in ["anchor_1700_d4_w70", "anchor_1700_d4_w75", "anchor_1700_d4_w80", "anchor_balanced"]:
         pred = ensembles[ens_name]
-        fname = f"beta07_{ens_name}_raw.csv"
+        fname = f"beta08_{ens_name}_raw.csv"
         save_candidate(fname, pred, valid_raw, out_dir, rep_dir, [], {"ensemble": ens_name, "rules_strength": 0.0, "bias": 0.0})
 
     (out_dir / "SUBMIT_FIRST.txt").write_text("\n".join(submit_first[:8]) + "\n", encoding="utf-8")
     (out_dir / "SUBMIT_SECOND.txt").write_text("\n".join(submit_first[8:]) + "\n", encoding="utf-8")
-    (art_dir / "beta07_model_meta.json").write_text(json.dumps({"target_col": target_col, "models": metas, "ensembles": list(ensembles)}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (art_dir / "beta08_model_meta.json").write_text(json.dumps({"target_col": target_col, "models": metas, "ensembles": list(ensembles)}, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("Generated candidates:")
     for s in submit_first:

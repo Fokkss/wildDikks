@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .feature_engineering import FARM_CAPACITY_MW, available_capacity_from_raw, make_features
-from .train_predict import rule_delta, clip_pred, write_submission, summary, read_csv
+from .train_predict import rule_delta, profile_delta, clip_pred, write_submission, summary, read_csv
 
 
 def load_pred_from_artifact(artifact_path: Path, raw: pd.DataFrame) -> np.ndarray:
@@ -27,11 +27,12 @@ def load_pred_from_artifact(artifact_path: Path, raw: pd.DataFrame) -> np.ndarra
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--features_path", required=True)
-    p.add_argument("--artifact_dir", default="artifacts_beta07")
-    p.add_argument("--output_path", default="submissions_beta07/submission_2027_beta07_production.csv")
+    p.add_argument("--artifact_dir", default="artifacts_beta08")
+    p.add_argument("--output_path", default="submissions_beta08/submission_2027_beta08_production.csv")
     p.add_argument("--profile", default="anchor_1700_d4_w75")
     p.add_argument("--rules_strength", type=float, default=0.45)
-    p.add_argument("--bias", type=float, default=0.50)
+    p.add_argument("--bias", type=float, default=0.70)
+    p.add_argument("--extra_profile", default="none", choices=["none", "dircloud", "physics", "all_mild", "all_strong", "lowrelax"])
     args = p.parse_args()
     raw = read_csv(args.features_path)
     art = Path(args.artifact_dir)
@@ -42,8 +43,11 @@ def main() -> None:
     pq1 = load_pred_from_artifact(art / "q1recent1700.joblib", raw)
     pnl = load_pred_from_artifact(art / "nolags1700.joblib", raw)
     profiles = {
+        "anchor_1700_d4_w65": 0.65*p1700 + 0.35*pd4,
+        "anchor_1700_d4_w70": 0.70*p1700 + 0.30*pd4,
         "anchor_1700_d4_w75": 0.75*p1700 + 0.25*pd4,
         "anchor_1700_d4_w80": 0.80*p1700 + 0.20*pd4,
+        "anchor_1700_d4_w85": 0.85*p1700 + 0.15*pd4,
         "anchor_1700_d4_nolag": 0.70*p1700 + 0.20*pd4 + 0.10*pnl,
         "anchor_1700_q1_d4": 0.65*p1700 + 0.20*pq1 + 0.15*pd4,
         "anchor_bag_legacy": 0.45*p1700 + 0.35*p1892 + 0.20*p2500,
@@ -52,10 +56,10 @@ def main() -> None:
     if args.profile not in profiles:
         raise ValueError(f"Unknown profile {args.profile}. Options: {sorted(profiles)}")
     base = profiles[args.profile]
-    pred = clip_pred(raw, base + rule_delta(raw, base, args.rules_strength) + args.bias)
+    pred = clip_pred(raw, base + rule_delta(raw, base, args.rules_strength) + profile_delta(raw, base, args.extra_profile) + args.bias)
     out = Path(args.output_path)
     write_submission(out, pred)
-    summary(out.with_suffix(".summary.json"), pred, {"profile": args.profile, "rules_strength": args.rules_strength, "bias": args.bias})
+    summary(out.with_suffix(".summary.json"), pred, {"profile": args.profile, "rules_strength": args.rules_strength, "bias": args.bias, "extra_profile": args.extra_profile})
     print(f"Saved: {out}")
 
 if __name__ == "__main__":

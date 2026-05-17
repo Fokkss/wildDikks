@@ -3,10 +3,10 @@ set -euo pipefail
 TRAIN_PATH="${1:-../data/train_dataset.csv}"
 VALID_PATH="${2:-../data/valid_features.csv}"
 TARGET="${3:-Выработка. Результирующий расчет}"
-python -m new_model_beta07.train_predict \
+python -m new_model_beta08.train_predict \
   --train_path "$TRAIN_PATH" \
   --valid_path "$VALID_PATH" \
   --target "$TARGET" \
-  --artifact_dir artifacts_beta07 \
-  --submission_dir submissions_beta07 \
-  --report_dir reports_beta07
+  --artifact_dir artifacts_beta08 \
+  --submission_dir submissions_beta08 \
+  --report_dir reports_beta08
