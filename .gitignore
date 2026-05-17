@@ -23,3 +23,13 @@ __pycache__/
 wildDikks/new_model/artifacts/
 artifacts/
 /new_model/artifacts/
+
+# jupyter
+*.ipynb
+
+artifacts_beta*/
+submissions_beta*/
+reports_beta*/
+*.joblib
+*.pkl
+
