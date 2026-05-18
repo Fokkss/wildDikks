@@ -1,0 +1,8 @@
+submissions_v1_3/v1_3_caprelax_uncap10.csv
+submissions_v1_3/v1_3_caprelax_uncap15.csv
+submissions_v1_3/v1_3_capzone_lift1p0.csv
+submissions_v1_3/v1_3_tail_lift0p6.csv
+submissions_v1_3/v1_3_caprelax_uncap20.csv
+submissions_v1_3/v1_3_lowtrim0p4_tail0p8.csv
+submissions_v1_3/v1_3_capzone_lift2p0.csv
+submissions_v1_3/v1_3_tail_lift1p0.csv
