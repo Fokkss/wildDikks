@@ -8,13 +8,15 @@ from pathlib import Path
 DEFAULT_CODE_PATHS = [
     "new_model_v1_0",
     "configs_v1_0",
-    "configs_v1_4",
+    "configs_v1_6",
+    "scripts",
     "requirements.txt",
+    "requirements_final_v1_6.txt",
 ]
 
 
 def _copy_any(src: Path, dst: Path) -> None:
-    # копируем файл или папку, сохраняя относительную структуру
+    # копируем файл или папку в сборочную директорию
     if src.is_dir():
         if dst.exists():
             shutil.rmtree(dst)
@@ -27,7 +29,7 @@ def _copy_any(src: Path, dst: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="make final delivery zip")
     parser.add_argument("--project_model_dir", default="model", help="path to model folder")
-    parser.add_argument("--submission_csv", required=True, help="final csv forecast")
+    parser.add_argument("--prediction_csv", required=True, help="final 18.05 forecast csv")
     parser.add_argument("--artifact_dir", required=True, help="trained model artifact directory")
     parser.add_argument("--train_data", required=True, help="used train csv")
     parser.add_argument("--note_docx", required=True, help="explanatory note docx")
@@ -41,19 +43,19 @@ def main() -> None:
         shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True)
 
-    # prediction csv goes to archive root
-    _copy_any(Path(args.submission_csv), build_dir / Path(args.submission_csv).name)
+    # прогноз на 18.05 кладем в корень архива
+    _copy_any(Path(args.prediction_csv), build_dir / Path(args.prediction_csv).name)
 
-    # model weights and json cards go into artifacts
+    # веса и json-карточки нужны только в zip, а не в публичном github
     _copy_any(Path(args.artifact_dir), build_dir / "artifacts")
 
-    # train data is required only for zip delivery, not for public github
+    # по тз использованные данные обучения должны лежать в zip
     _copy_any(Path(args.train_data), build_dir / "data" / Path(args.train_data).name)
 
-    # note is required by task statement
+    # пояснительная записка добавляется как отдельный файл
     _copy_any(Path(args.note_docx), build_dir / Path(args.note_docx).name)
 
-    # code is copied from model directory
+    # код копируется отдельно, чтобы архив был воспроизводимым
     code_root = build_dir / "code" / "model"
     for rel in DEFAULT_CODE_PATHS:
         src = model_dir / rel

@@ -1,6 +1,6 @@
 {
-  "version": "V1.4-final",
-  "description": "final reproducible model: v1 production ensemble plus tiny internal cap-relax blend",
+  "version": "V1.6-final-day18-fill",
+  "description": "final reproducible model: v1 production ensemble plus tiny internal cap-relax blend and 18.05 day-table prediction",
   "xgb_anchor": {
     "legacy1700_weight": 0.7,
     "depth4_1892_weight": 0.3
@@ -22,6 +22,13 @@
     "equivalent_unclipped_global_weight": 0.003,
     "global_min_mw": 0.0,
     "global_max_mw": 90.09
+  },
+  "day_fill": {
+    "target_col": "Выработка. Результирующий расчет",
+    "datetime_col": "METEOFORECASTHOUR_OPENM_Datetime",
+    "selection_mode": "empty_target",
+    "default_expected_rows": 24,
+    "prediction_column": "Выработка. Результирующий расчет"
   },
   "output": {
     "default_header": true,
