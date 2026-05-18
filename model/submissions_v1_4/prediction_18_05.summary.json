@@ -1,0 +1,59 @@
+{
+  "n": 1152,
+  "mean": 24.504653996182597,
+  "std": 21.908741555986897,
+  "min": 0.985036,
+  "q05": 2.273607680903235,
+  "q50": 16.733374418420247,
+  "q95": 73.04123588442465,
+  "max": 78.59279135057511,
+  "version": "V1.4-final",
+  "kind": "final_reproducible_inference",
+  "weights": {
+    "version": "V1.4-final",
+    "description": "final reproducible model: v1 production ensemble plus tiny internal cap-relax blend",
+    "xgb_anchor": {
+      "legacy1700_weight": 0.7,
+      "depth4_1892_weight": 0.3
+    },
+    "catboost_blend": {
+      "anchor_weight": 0.6,
+      "catboost_weight": 0.4
+    },
+    "rule_layer": {
+      "rules_strength": 0.55,
+      "bias_mw": 0.85,
+      "profile": "density_boost"
+    },
+    "cap_relax": {
+      "enabled": true,
+      "caprelax_uncap_fraction": 0.1,
+      "base_weight": 0.97,
+      "relaxed_weight": 0.03,
+      "equivalent_unclipped_global_weight": 0.003,
+      "global_min_mw": 0.0,
+      "global_max_mw": 90.09
+    },
+    "output": {
+      "default_header": true,
+      "prediction_column": "prediction"
+    },
+    "random_seed": 42
+  },
+  "postprocess_report": {
+    "postprocess": "base_plus_internal_caprelax_blend",
+    "base_weight": 0.97,
+    "relaxed_weight": 0.03,
+    "caprelax_uncap_fraction": 0.1,
+    "equivalent_unclipped_global_weight": 0.003,
+    "n": 1152,
+    "delta_mean": -3.1893428908009845e-05,
+    "delta_abs_mean": 3.784974290751358e-05,
+    "delta_abs_max": 0.0031455000000000233,
+    "changed_gt_0p001": 19,
+    "base_max": 78.59279135057511,
+    "raw_global_max": 78.61857768522363,
+    "final_max": 78.59279135057511
+  },
+  "header": true
+}

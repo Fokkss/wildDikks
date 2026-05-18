@@ -1,7 +1,6 @@
 {
-  "version": "V1.0",
-  "description": "Final production configuration selected from beta13 leaderboard experiments.",
-  "best_public_validation_score_percent": 8.341698088430002,
+  "version": "V1.4-final",
+  "description": "final reproducible model: v1 production ensemble plus tiny internal cap-relax blend",
   "xgb_anchor": {
     "legacy1700_weight": 0.7,
     "depth4_1892_weight": 0.3
@@ -14,6 +13,15 @@
     "rules_strength": 0.55,
     "bias_mw": 0.85,
     "profile": "density_boost"
+  },
+  "cap_relax": {
+    "enabled": true,
+    "caprelax_uncap_fraction": 0.10,
+    "base_weight": 0.97,
+    "relaxed_weight": 0.03,
+    "equivalent_unclipped_global_weight": 0.003,
+    "global_min_mw": 0.0,
+    "global_max_mw": 90.09
   },
   "output": {
     "default_header": true,
