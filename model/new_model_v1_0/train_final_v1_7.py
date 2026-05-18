@@ -4,41 +4,38 @@ import argparse
 import json
 import os
 import random
+import shutil
 from pathlib import Path
 from typing import Any
 
 import joblib
 import numpy as np
 
-from .predict_final_v1_6 import (
-    _write_submission,
-    predict_day_target_column,
-    predict_final_array,
-)
+from .predict_final_v1_7 import predict_to_file
 from .train import _fit_catboost, _load_train_frame
-from .train_predict import fit_model, make_sample_weights, read_csv, set_seed, summary
+from .train_predict import fit_model, make_sample_weights, set_seed
 
 
-DEFAULT_WEIGHTS_PATH = Path("configs_v1_6/final_v1_6_weights.json")
+DEFAULT_WEIGHTS_PATH = Path("configs_v1_7/final_v1_7_weights.json")
 
 
 def _load_weights(path: Path | None) -> dict[str, Any]:
-    # веса лежат в json, чтобы финальный postprocess был явно зафиксирован
+    # веса лежат в json, чтобы итоговую смесь было легко проверить
     if path is None:
         path = DEFAULT_WEIGHTS_PATH
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _save_weights(artifact_dir: Path, weights: dict[str, Any]) -> None:
-    # сохраняем копию весов рядом с обученными моделями
+    # копируем веса рядом с обученными моделями
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    (artifact_dir / "final_v1_6_weights.json").write_text(
+    (artifact_dir / "final_v1_7_weights.json").write_text(
         json.dumps(weights, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    # этот файл оставлен для совместимости со старым кодом v1
+    # этот файл нужен для совместимости со старым production-кодом
     (artifact_dir / "model_v1_0_config.json").write_text(
         json.dumps(weights, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -46,14 +43,14 @@ def _save_weights(artifact_dir: Path, weights: dict[str, Any]) -> None:
 
 
 def _copy_weights_to_artifacts(weights_path: Path | None, artifact_dir: Path) -> dict[str, Any]:
-    # если передан свой json, он становится источником истины для predict
+    # если передан свой json, используем его вместо дефолтного
     weights = _load_weights(weights_path)
     _save_weights(artifact_dir, weights)
     return weights
 
 
 def _safe_meta(meta: dict[str, Any]) -> dict[str, Any]:
-    # большие python-объекты не кладем в человекочитаемую карточку
+    # тяжелые объекты модели не пишем в карточку
     return {
         k: v
         for k, v in meta.items()
@@ -69,7 +66,7 @@ def train_artifacts(
     weights: dict[str, Any],
     seed: int,
 ) -> dict[str, Any]:
-    # фиксируем случайность перед обучением всех моделей
+    # фиксируем случайность перед обучением
     set_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -77,10 +74,10 @@ def train_artifacts(
 
     raw, y, target_col = _load_train_frame(train_path, target)
 
-    # валидационный placeholder нужен старому fit_model, но модель обучается на всех строках
+    # valid нужен только для построения матрицы, модель обучается на всем train
     placeholder_valid = raw.head(1).copy()
 
-    # основной неглубокий xgboost дал самый стабильный вклад на leaderboard
+    # основной устойчивый xgboost
     _, legacy_meta = fit_model(
         raw,
         y,
@@ -98,7 +95,7 @@ def train_artifacts(
     )
     joblib.dump(legacy_meta, artifact_dir / "legacy1700.joblib")
 
-    # второй xgboost чуть глубже и добавляет разнообразие без смены подхода
+    # более глубокий xgboost-компаньон
     _, depth4_meta = fit_model(
         raw,
         y,
@@ -116,15 +113,15 @@ def train_artifacts(
     )
     joblib.dump(depth4_meta, artifact_dir / "depth4_1892.joblib")
 
-    # catboost оставлен как независимый табличный компаньон
+    # catboost добавляет другой табличный сигнал
     cat_meta = _fit_catboost(raw, y, target_col=target_col, seed=seed + 43)
     joblib.dump(cat_meta, artifact_dir / "catboost_companion.joblib")
 
     model_card = {
-        "version": weights.get("version", "V1.6-final"),
+        "version": weights.get("version", "V1.7-final"),
         "target_col": target_col,
         "seed": seed,
-        "weights_path": str(artifact_dir / "final_v1_6_weights.json"),
+        "weights_path": str(artifact_dir / "final_v1_7_weights.json"),
         "weights": weights,
         "artifacts": [
             "legacy1700.joblib",
@@ -138,7 +135,7 @@ def train_artifacts(
         "catboost_model": _safe_meta(cat_meta),
     }
 
-    (artifact_dir / "model_v1_6_card.json").write_text(
+    (artifact_dir / "model_v1_7_card.json").write_text(
         json.dumps(model_card, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -147,16 +144,21 @@ def train_artifacts(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="train final v1.6 model")
+    parser = argparse.ArgumentParser(description="train final v1.7 model")
     parser.add_argument("--train_path", required=True, help="path to train csv")
-    parser.add_argument("--features_path", default=None, help="optional features csv for immediate prediction")
+    parser.add_argument("--features_path", default=None, help="optional csv for immediate prediction")
     parser.add_argument("--target", default="Выработка. Результирующий расчет", help="target column")
-    parser.add_argument("--artifact_dir", default="artifacts_v1_6", help="where model weights are saved")
+    parser.add_argument("--artifact_dir", default="artifacts_v1_7", help="where model weights are saved")
     parser.add_argument("--weights_path", default=None, help="optional final weights json")
-    parser.add_argument("--output_path", default="submissions_v1_6/prediction_18_05.csv")
-    parser.add_argument("--prediction_mode", choices=["day_target", "all"], default="day_target")
-    parser.add_argument("--date", default=None, help="optional date filter, format yyyy-mm-dd")
-    parser.add_argument("--expected_rows", type=int, default=24, help="expected prediction rows; use 0 to disable")
+    parser.add_argument("--output_path", default="submissions_v1_7/submission.csv")
+    parser.add_argument(
+        "--prediction_mode",
+        choices=["normal", "generic", "day18"],
+        default="normal",
+        help="prediction mode used if --features_path is passed",
+    )
+    parser.add_argument("--output_col", default="prediction")
+    parser.add_argument("--filled_table_path", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--header", dest="header", action="store_true", default=True)
     parser.add_argument("--no_header", dest="header", action="store_false")
@@ -178,46 +180,25 @@ def main() -> None:
         seed=args.seed,
     )
 
-    # сразу создаем прогноз, если дан файл с 17 и 18 числом
+    # сразу делаем прогноз, если csv передан в команду обучения
     if args.features_path:
-        raw = read_csv(args.features_path)
-
-        if args.prediction_mode == "all":
-            pred, report = predict_final_array(raw, artifact_dir=artifact_dir, weights=weights)
-            column = weights.get("output", {}).get("prediction_column", "prediction")
-        else:
-            expected_rows = None if args.expected_rows == 0 else args.expected_rows
-            pred, report = predict_day_target_column(
-                raw,
-                artifact_dir=artifact_dir,
-                weights=weights,
-                target_col=args.target,
-                date=args.date,
-                expected_rows=expected_rows,
-            )
-            column = args.target
-
-        output_path = Path(args.output_path)
-        _write_submission(output_path, pred, header=args.header, column=column)
-
-        summary(
-            output_path.with_suffix(".summary.json"),
-            pred,
-            {
-                "version": weights.get("version", "V1.6-final"),
-                "kind": f"train_then_predict_v1_6_{args.prediction_mode}",
-                "weights": weights,
-                "postprocess_report": report,
-                "header": bool(args.header),
-                "column": column,
-            },
+        predict_to_file(
+            features_path=Path(args.features_path),
+            artifact_dir=artifact_dir,
+            output_path=Path(args.output_path),
+            weights_path=artifact_dir / "final_v1_7_weights.json",
+            mode=args.prediction_mode,
+            header=bool(args.header),
+            output_col=args.output_col,
+            target_col=args.target,
+            filled_table_path=Path(args.filled_table_path) if args.filled_table_path else None,
+            strict_24=True,
         )
-
-        print(f"saved prediction: {output_path}")
+        print(f"saved prediction: {args.output_path}")
 
     print(f"saved artifacts: {artifact_dir}")
-    print(f"saved weights: {artifact_dir / 'final_v1_6_weights.json'}")
-    print(f"saved model card: {artifact_dir / 'model_v1_6_card.json'}")
+    print(f"saved weights: {artifact_dir / 'final_v1_7_weights.json'}")
+    print(f"saved model card: {artifact_dir / 'model_v1_7_card.json'}")
 
 
 if __name__ == "__main__":

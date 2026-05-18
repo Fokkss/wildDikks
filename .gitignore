@@ -33,3 +33,8 @@ reports_beta*/
 *.joblib
 *.pkl
 
+make_delivery_zip_v1_7.sh
+make_delivery_zip_v1_7.py
+
+*json
+!final_v1_7_weights.json
