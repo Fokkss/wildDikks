@@ -17,6 +17,11 @@ RATED_MS_LEGACY = 12.0
 CUT_OUT_MS = 25.0
 R_DRY_AIR = 287.05
 STD_AIR_DENSITY = 1.225
+BETZ_CP = 16.0 / 27.0
+ROTOR_DIAMETER_M = 132.0
+ROTOR_AREA_M2 = math.pi * (ROTOR_DIAMETER_M / 2.0) ** 2
+G_ACCEL = 9.80665
+EPS = 1e-6
 
 KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
     "wind_speed": ("wind_speed", "windspeed", "wind speed", "ws", "speed", "скорость", "ветер"),
@@ -196,6 +201,31 @@ def add_lag_features(out: pd.DataFrame, value: pd.Series, prefix: str, dt: Optio
         out[f"{prefix}_roll_mean_{w}"] = v.shift(1).rolling(w, min_periods=1).mean()
         out[f"{prefix}_roll_std_{w}"] = v.shift(1).rolling(w, min_periods=2).std()
     return out
+    
+def add_past_sum_features(out: pd.DataFrame, value: pd.Series, prefix: str, dt: Optional[pd.Series], windows=(3, 6, 12, 24)) -> pd.DataFrame:
+    v = pd.to_numeric(value, errors="coerce").fillna(0.0)
+    if dt is not None:
+        tmp = (
+            pd.DataFrame({"dt": dt, "v": v})
+            .dropna(subset=["dt"])
+            .drop_duplicates("dt", keep="last")
+            .set_index("dt")["v"]
+            .sort_index()
+        )
+        if not tmp.empty:
+            shifted = tmp.shift(1)
+            for w in windows:
+                out[f"{prefix}_sum_prev_{w}h"] = dt.map(
+                    shifted.rolling(f"{w}h", min_periods=1).sum()
+                )
+            return out
+    shifted = v.shift(1)
+    for w in windows:
+        out[f"{prefix}_sum_prev_{w}h"] = shifted.rolling(
+            w,
+            min_periods=1,
+        ).sum()
+    return out
 
 def make_features(df: pd.DataFrame, target_col: Optional[str] = None, *, use_lags: bool = True, use_time: bool = True, use_availability: bool = True) -> pd.DataFrame:
     out = df.copy().rename(columns=RENAME_MAP)
@@ -310,11 +340,90 @@ def make_features(df: pd.DataFrame, target_col: Optional[str] = None, *, use_lag
         out["pressure_low"] = (press_hpa < 1005).astype(float)
         out["pressure_midlow"] = ((press_hpa >= 1005) & (press_hpa < 1015)).astype(float)
         out["pressure_high"] = (press_hpa >= 1025).astype(float)
+    # ------------------------------------------------------------
+    # Thermal stratification / boundary-layer stability proxy
+    # ------------------------------------------------------------
+    temp80_col = find_col(out, "temp", 80)
+    temp120_col = find_col(out, "temp", 120)
+    temp80_raw = num(out, temp80_col)
+    temp120_raw = num(out, temp120_col)
+    temp80_c = temp_to_c(temp80_raw)
+    temp120_c = temp_to_c(temp120_raw)
+    if temp80_c.notna().any() and temp120_c.notna().any():
+        out["temp_gradient_120_80"] = temp120_c - temp80_c
+        out["lapse_rate_120_80_c_per_100m"] = (
+            out["temp_gradient_120_80"] / (120.0 - 80.0) * 100.0
+        )
+        out["stable_layer_120_80"] = (
+            out["temp_gradient_120_80"] > 0.2
+        ).astype(float)
+        out["unstable_layer_120_80"] = (
+            out["temp_gradient_120_80"] < -0.4
+        ).astype(float)
+        if ws80.notna().any() and ws120.notna().any():
+            temp_mid_k = temp_to_k((temp80_raw + temp120_raw) / 2.0)
+            dtheta_dz = out["temp_gradient_120_80"] / (120.0 - 80.0)
+            du_dz = (ws120 - ws80) / (120.0 - 80.0)
+            ri = (
+                G_ACCEL
+                / (temp_mid_k + EPS)
+                * dtheta_dz
+                / ((du_dz ** 2) + EPS)
+            )
+            out["bulk_richardson_120_80_proxy"] = ri.clip(-10, 10)
+            out["bulk_richardson_abs_120_80"] = (
+                out["bulk_richardson_120_80_proxy"].abs()
+            )
+            out["stable_low_shear_risk"] = (
+                (out["bulk_richardson_120_80_proxy"] > 0.25)
+                & (ws120 >= 5.0)
+            ).astype(float)
+            out["unstable_high_shear_risk"] = (
+                (out["bulk_richardson_120_80_proxy"] < -0.25)
+                & ((ws120 - ws80).abs() > 1.0)
+            ).astype(float)
     if "temp_k_inferred" in out and "pressure_pa_inferred" in out:
         rho = (out["pressure_pa_inferred"] / (R_DRY_AIR * out["temp_k_inferred"])).clip(0.7,1.6)
         out["air_density_kg_m3_proxy"] = rho
         out["wind_power_density_proxy"] = 0.5 * rho * out["hub_ws_84m_cube"]
+        betz_one_turbine_mw = (
+            0.5
+            * rho
+            * ROTOR_AREA_M2
+            * out["hub_ws_84m_cube"]
+            * BETZ_CP
+            / 1_000_000.0
+        )
+        out["betz_one_turbine_mw"] = betz_one_turbine_mw
+        if "available_turbines" in out.columns:
+            out["betz_farm_mw"] = (
+                betz_one_turbine_mw * out["available_turbines"]
+            )
+        else:
+            out["betz_farm_mw"] = betz_one_turbine_mw * N_TURBINES
+        if "available_capacity_mw" in out.columns:
+            out["betz_farm_clipped_mw"] = np.minimum(
+                out["betz_farm_mw"],
+                out["available_capacity_mw"],
+            )
+        else:
+            out["betz_farm_clipped_mw"] = np.minimum(
+                out["betz_farm_mw"],
+                FARM_CAPACITY_MW,
+            )
+        out["pc84_to_betz_ratio"] = pd.Series(
+            safe_div(
+                out["expected_power_84m_proxy"],
+                out["betz_farm_clipped_mw"] + EPS,
+            ),
+            index=out.index,
+        ).clip(0, 10)
         out["power_curve_density"] = out["expected_power_84m_proxy"] * rho / STD_AIR_DENSITY
+        if "available_capacity_mw" in out.columns:
+            out["power_curve_density_clipped"] = np.minimum(
+                out["power_curve_density"],
+                out["available_capacity_mw"],
+            )
         if "expected_power_84m_103_proxy" in out.columns:
             out["power_curve_103_density"] = out["expected_power_84m_103_proxy"] * rho / STD_AIR_DENSITY
 
