@@ -343,7 +343,16 @@ def make_features(df: pd.DataFrame, target_col: Optional[str] = None, *, use_lag
 
     if use_lags and hub84.notna().any():
         out = add_lag_features(out, hub84, "hub_ws", dt)
-
+    if use_lags and ws120.notna().any():
+        out = add_lag_features(out, ws120, "ws120", dt)
+    if use_lags and ws180.notna().any():
+        out = add_lag_features(out, ws180, "ws180", dt)
+    if use_lags and "power_curve_84m" in out.columns:
+        out = add_lag_features(out, out["power_curve_84m"], "pc84", dt)
+    if use_lags and "expected_power_84m_proxy" in out.columns:
+        out = add_lag_features(out, out["expected_power_84m_proxy"], "exp84", dt)
+    if use_lags and "wind_power_density_proxy" in out.columns:
+        out = add_lag_features(out, out["wind_power_density_proxy"], "wpd84", dt)  
     # Manual interaction columns for production calibration model.
     # These are features, not direct leaderboard-fitting.
     if "ws_diff_180_80" in out:
