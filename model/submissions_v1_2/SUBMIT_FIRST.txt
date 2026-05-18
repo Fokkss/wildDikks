@@ -1,0 +1,5 @@
+submissions_v1_2/v1_2_bias0p92_density.csv
+submissions_v1_2/v1_2_xgb72_cat40_rules55_bias85_density.csv
+submissions_v1_2/v1_2_xgb70_cat43_rules55_bias85_density.csv
+submissions_v1_2/v1_2_rules0p58_bias0p85_density.csv
+submissions_v1_2/v1_2_profile_physics_strong.csv

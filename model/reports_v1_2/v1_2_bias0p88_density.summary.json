@@ -1,0 +1,34 @@
+{
+  "n": 2126,
+  "mean": 39.35305821353928,
+  "std": 25.485141158025534,
+  "min": 0.715,
+  "q05": 2.9684175123034606,
+  "q50": 40.26918026349886,
+  "q95": 74.9883529768032,
+  "max": 79.69500000000001,
+  "candidate": "v1_2_bias0p88_density",
+  "config": {
+    "version": "V1.2-grid",
+    "description": "Small no-retrain grid around V1.1 best leaderboard config.",
+    "xgb_anchor": {
+      "legacy1700_weight": 0.7,
+      "depth4_1892_weight": 0.30000000000000004
+    },
+    "catboost_blend": {
+      "anchor_weight": 0.6,
+      "catboost_weight": 0.4
+    },
+    "rule_layer": {
+      "rules_strength": 0.55,
+      "bias_mw": 0.88,
+      "profile": "density_boost"
+    },
+    "output": {
+      "default_header": true,
+      "prediction_column": "prediction"
+    },
+    "random_seed": 42
+  },
+  "header": true
+}
